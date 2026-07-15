@@ -1,0 +1,5 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile.agent', '-t', 'gcr.io/hackathon-grocery-ai-498023/smartcart-agent', '.']
+images:
+  - 'gcr.io/hackathon-grocery-ai-498023/smartcart-agent'

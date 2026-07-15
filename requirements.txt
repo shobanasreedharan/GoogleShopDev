@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+google-generativeai
+python-dotenv==1.0.1
+requests==2.32.3
+pandas==2.2.2
+numpy==1.26.4
+gunicorn==22.0.0
+google-cloud-aiplatform
+mcp
+google-adk
+httpx
