@@ -149,10 +149,9 @@ const TABS  = [
 ];
 
 const CHAT_SUGGESTIONS = [
-  "What's in my pantry?",
-  "Suggest a vegetarian meal",
-  "What can I cook with rice and oil?",
-  "Save my current meal plan",
+  "Plan a meal from my pantry",
+  "Find the cheapest store nearby",
+  "Show me my saved recipes",
 ];
 
 const headerBtnStyle = {
@@ -195,9 +194,119 @@ function formatPrice(amount, currency="USD") {
 }
 
 // ── Chat Panel ───────────────────────────────────────────────────────────────
+function toolLabel(name="") {
+  const labels = {
+    get_pantry_items: "Pantry inventory",
+    list_recipes: "Saved recipes",
+    compare_stores: "Store comparison",
+  };
+  return labels[name] || name.replace(/_/g, " ") || "Tool";
+}
+
+function toolIcon(step) {
+  if (step?.status === "error") return "⚠️";
+  if (step?.tool === "get_pantry_items") return "🥦";
+  if (step?.tool === "list_recipes") return "📖";
+  if (step?.tool === "compare_stores") return "🏪";
+  return "✅";
+}
+
+function moneyMaybe(value, currency="USD") {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return formatPrice(n, currency);
+}
+
+function AgentTrace({ steps=[] }) {
+  const [open, setOpen] = useState(false);
+  if (!steps?.length) return null;
+  const failures = steps.filter(s => s.status === "error").length;
+  return (
+    <div style={{ marginTop:8, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:T.surface }}>
+      <button onClick={()=>setOpen(o=>!o)} style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"7px 9px", border:"none", background:T.surfaceAlt, color:T.inkSec, cursor:"pointer", fontSize:11, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", fontFamily:"'Lato',sans-serif" }}>
+        <span>{failures ? "⚠️" : "✅"} Agent used tools · {steps.length}</span>
+        <span style={{ fontSize:13 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{ padding:"8px 10px", display:"flex", flexDirection:"column", gap:8 }}>
+          {steps.map((step, i) => (
+            <div key={`${step.tool}-${i}`} style={{ display:"grid", gridTemplateColumns:"22px 1fr", gap:8, alignItems:"start" }}>
+              <span style={{ fontSize:15, lineHeight:"20px" }}>{toolIcon(step)}</span>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:step.status==="error"?T.red:T.ink, textTransform:"capitalize" }}>{toolLabel(step.tool)}</div>
+                <div style={{ fontSize:11, color:step.status==="error"?T.red:T.inkSec, lineHeight:1.4 }}>{step.summary}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentCards({ cards={} }) {
+  const shopping = Array.isArray(cards.shopping_list) ? cards.shopping_list : [];
+  const stores = Array.isArray(cards.stores) ? cards.stores : [];
+  const recipes = Array.isArray(cards.recipes) ? cards.recipes : [];
+  if (!shopping.length && !stores.length && !recipes.length) return null;
+
+  return (
+    <div style={{ marginTop:8, display:"flex", flexDirection:"column", gap:8 }}>
+      {!!shopping.length && (
+        <div style={{ border:`1px solid ${T.green}33`, background:T.greenLight, borderRadius:8, padding:"9px 10px" }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.green, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:6 }}>Items</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+            {shopping.slice(0, 12).map((item, i) => (
+              <span key={`${item}-${i}`} style={{ fontSize:11, padding:"3px 7px", borderRadius:14, background:T.surface, color:T.green, border:`1px solid ${T.green}22`, textTransform:"capitalize" }}>{item}</span>
+            ))}
+            {shopping.length > 12 && <span style={{ fontSize:11, color:T.green, padding:"3px 0" }}>+{shopping.length-12} more</span>}
+          </div>
+        </div>
+      )}
+
+      {!!stores.length && (
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase" }}>Store comparison</div>
+          {stores.slice(0, 3).map((store, i) => {
+            const breakdown = Object.values(store.price_breakdown||{});
+            const currency = store.items?.[0]?.currency || breakdown?.[0]?.currency || "USD";
+            const price = moneyMaybe(store.basket_price, currency);
+            return (
+              <div key={`${store.store_name || store.brand || "store"}-${i}`} style={{ border:`1px solid ${T.border}`, background:T.surface, borderRadius:8, padding:"8px 10px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"baseline" }}>
+                  <span style={{ fontSize:12, fontWeight:800, color:T.ink }}>{store.store_name || store.brand || "Store"}</span>
+                  {price && <span style={{ fontSize:12, fontFamily:"'DM Mono',monospace", color:T.green }}>{price}</span>}
+                </div>
+                <div style={{ display:"flex", gap:10, marginTop:3, fontSize:11, color:T.inkSec }}>
+                  {Number.isFinite(Number(store.distance_km)) && <span>📍 {Number(store.distance_km).toFixed(1)} km</span>}
+                  {Number.isFinite(Number(store.final_score)) && <span>Score {Number(store.final_score).toFixed(2)}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!!recipes.length && (
+        <div style={{ border:`1px solid ${T.blue}22`, background:T.blueLight, borderRadius:8, padding:"9px 10px" }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:6 }}>Recipes</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+            {recipes.slice(0, 10).map((recipe, i) => {
+              const raw = recipe.meal || recipe.name || `Recipe ${i+1}`;
+              const label = String(raw).split("|")[0];
+              return <span key={`${raw}-${i}`} style={{ fontSize:11, padding:"3px 7px", borderRadius:14, background:T.surface, color:T.blue, border:`1px solid ${T.blue}22`, textTransform:"capitalize" }}>{label}</span>;
+            })}
+            {recipes.length > 10 && <span style={{ fontSize:11, color:T.blue, padding:"3px 0" }}>+{recipes.length-10} more</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatPanel({ onClose, user, getToken }) {
   const [messages, setMessages] = useState([
-    { role:"agent", text:"Hi! I'm your SmartCart AI assistant. I can check your pantry, suggest meals, and help plan your groceries. What would you like to know?" }
+    { role:"agent", text:"Hi! I'm your SmartCart AI assistant. I can check your pantry, suggest meals, and help plan your groceries. What would you like to know?", steps:[], cards:{ shopping_list:[], stores:[], recipes:[] } }
   ]);
   const [input, setInput] = useState("");
   const [loading, setChatLoading] = useState(false);
@@ -218,9 +327,15 @@ function ChatPanel({ onClose, user, getToken }) {
         body: JSON.stringify({ message:msg, user_id:user?.uid??"anonymous", session_id:sessionId }),
       });
       const json = await res.json();
-      setMessages(prev => [...prev, { role:"agent", text:json.response||"Sorry, I didn't get a response." }]);
+      setMessages(prev => [...prev, {
+        role:"agent",
+        text:json.response||"Sorry, I didn't get a response.",
+        steps:Array.isArray(json.steps)?json.steps:[],
+        cards:json.cards||{ shopping_list:[], stores:[], recipes:[] },
+        usage:json.usage||null,
+      }]);
     } catch {
-      setMessages(prev => [...prev, { role:"agent", text:"⚠ Connection error. Please try again.", isError:true }]);
+      setMessages(prev => [...prev, { role:"agent", text:"⚠ Connection error. Please try again.", steps:[], cards:{ shopping_list:[], stores:[], recipes:[] }, isError:true }]);
     } finally { setChatLoading(false); }
   };
 
@@ -239,19 +354,21 @@ function ChatPanel({ onClose, user, getToken }) {
       <div style={{ flex:1, overflowY:"auto", padding:"1rem", display:"flex", flexDirection:"column", gap:12 }}>
         {messages.map((msg,i) => (
           <div key={i} className={msg.role==="user"?"chat-msg-user":"chat-msg-agent"} style={{ display:"flex", justifyContent:msg.role==="user"?"flex-end":"flex-start" }}>
-            <div style={{ maxWidth:"85%", padding:"10px 14px", borderRadius:msg.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px", background:msg.role==="user"?T.ink:msg.isError?T.redLight:T.surfaceAlt, color:msg.role==="user"?"#FFF":msg.isError?T.red:T.ink, fontSize:13, lineHeight:1.6, border:`1px solid ${msg.role==="user"?"transparent":msg.isError?T.red+"33":T.border}` }}>
-              {msg.text}
+            <div style={{ maxWidth:"85%" }}>
+              <div style={{ padding:"10px 14px", borderRadius:msg.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px", background:msg.role==="user"?T.ink:msg.isError?T.redLight:T.surfaceAlt, color:msg.role==="user"?"#FFF":msg.isError?T.red:T.ink, fontSize:13, lineHeight:1.6, border:`1px solid ${msg.role==="user"?"transparent":msg.isError?T.red+"33":T.border}` }}>
+                {msg.text}
+              </div>
+              {msg.role==="agent" && !msg.isError && <AgentTrace steps={msg.steps||[]} />}
+              {msg.role==="agent" && !msg.isError && <AgentCards cards={msg.cards||{}} />}
             </div>
           </div>
         ))}
         {loading && <div style={{ display:"flex", justifyContent:"flex-start" }}><div style={{ padding:"10px 14px", borderRadius:"12px 12px 12px 2px", background:T.surfaceAlt, border:`1px solid ${T.border}`, display:"flex", gap:5, alignItems:"center" }}>{[0,1,2].map(i=><div key={i} style={{ width:6, height:6, borderRadius:"50%", background:T.inkTer, animation:`pulse 1.2s ${i*0.2}s ease infinite` }}/>)}</div></div>}
         <div ref={messagesEndRef}/>
       </div>
-      {messages.length===1 && (
-        <div style={{ padding:"0 1rem 0.75rem", display:"flex", flexWrap:"wrap", gap:6, flexShrink:0 }}>
-          {CHAT_SUGGESTIONS.map((s,i) => <button key={i} onClick={()=>sendMessage(s)} style={{ fontSize:11, padding:"4px 10px", borderRadius:20, border:`1px solid ${T.border}`, background:T.surfaceAlt, color:T.inkSec, cursor:"pointer", fontFamily:"'Lato',sans-serif", fontWeight:700 }}>{s}</button>)}
-        </div>
-      )}
+      <div style={{ padding:"0 1rem 0.75rem", display:"flex", flexWrap:"wrap", gap:6, flexShrink:0 }}>
+        {CHAT_SUGGESTIONS.map((s,i) => <button key={i} onClick={()=>sendMessage(s)} disabled={loading} style={{ fontSize:11, padding:"4px 10px", borderRadius:20, border:`1px solid ${T.border}`, background:T.surfaceAlt, color:T.inkSec, cursor:loading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", fontWeight:700 }}>{s}</button>)}
+      </div>
       <div style={{ padding:"0.75rem 1rem", borderTop:`1px solid ${T.border}`, display:"flex", gap:8, flexShrink:0, background:T.surface }}>
         <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Ask about your pantry, meals, or grocery list…" rows={2} style={{ flex:1, background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 12px", fontSize:13, color:T.ink, fontFamily:"'Lato',sans-serif", outline:"none", resize:"none", lineHeight:1.5 }}/>
         <button onClick={()=>sendMessage()} disabled={loading||!input.trim()} style={{ width:40, height:40, alignSelf:"flex-end", borderRadius:6, background:loading||!input.trim()?T.borderDark:T.green, border:"none", color:"#FFF", fontSize:16, cursor:loading||!input.trim()?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"background 0.15s", flexShrink:0 }}>↑</button>
