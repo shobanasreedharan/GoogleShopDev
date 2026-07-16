@@ -24,6 +24,7 @@ from backend.agent.chat_tool_router import (
     route_chat_tools,
 )
 from backend.core.pipeline import run_grocery_pipeline
+from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
 from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
 from backend.db.rate_limit_repository import (
@@ -285,9 +286,17 @@ User question: {req.message}
 Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
 If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    from vertexai.generative_models import GenerativeModel
-    model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
-    response = model.generate_content(prompt)
+    # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
+    def generate_with_gemini(chat_prompt: str) -> str:
+        from vertexai.generative_models import GenerativeModel
+        model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+        return model.generate_content(chat_prompt).text
+
+    response_text, _model_used = generate_primary_or_fallback(
+        prompt,
+        generate_with_gemini,
+        log_prefix="chat",
+    )
 
     increment_usage(uid, "chat")
 
