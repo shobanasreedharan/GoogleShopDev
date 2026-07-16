@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from backend.core.gpt56_client import generate_primary_or_fallback
 from backend.db.recipe_cache_repository import (
+    build_recipe_cache_key,
     get_cached_recipe,
     save_recipe_cache
 )
@@ -28,7 +29,7 @@ def generate_text(prompt: str) -> str:
 
 
 def _cache_key(meal: str, dietary: str) -> str:
-    return f"{meal.strip().lower()}|{dietary.strip().lower()}"
+    return build_recipe_cache_key(meal, dietary)
 
 
 def _build_single_meal_prompt(weekly_meals: dict, dietary: str, manual_items: list) -> str:
@@ -211,7 +212,7 @@ def run_unified_ai(
                 substitutions = cached.get("substitutions", {})
                 nutrition     = cached.get("nutrition_report", {})
                 instructions  = cached.get("instructions", [])
-                if ingredients and substitutions and nutrition:
+                if ingredients:
                     print(f"[unified_ai] Full cache hit: '{key}' — skipping Gemini")
                     result = _format_response({
                         "shopping_list":    ingredients,
