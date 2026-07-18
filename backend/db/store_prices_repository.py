@@ -70,6 +70,36 @@ def _item_key(item: str) -> str:
     return _make_id(item)
 
 
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).lower()
+
+
+def _make_id(value: str) -> str:
+    normalized = _normalize_text(value)
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+    return normalized.strip("_") or "unknown"
+
+
+def normalize_city(city: str) -> str:
+    return _normalize_text(city)
+
+
+def normalize_state(state: str) -> str:
+    return _normalize_text(state)
+
+
+def normalize_country(country: str) -> str:
+    return (country or "US").strip().upper() or "US"
+
+
+def _city_key(city: str, state: str = "", country: str = "US") -> str:
+    return _make_id("_".join([normalize_country(country), normalize_state(state), normalize_city(city)]))
+
+
+def _item_key(item: str) -> str:
+    return _make_id(item)
+
+
 def get_currency_for_country(country: str) -> str:
     """Resolve an ISO country code/name to a currency code."""
     return COUNTRY_CURRENCY_MAP.get(normalize_country(country), "USD")
@@ -102,7 +132,7 @@ def _clean_items(items: dict, currency: str, uploaded_by: str, receipt_date: str
         cleaned[name] = {
             "price": price,
             "unit": data.get("unit", ""),
-            "currency": currency,
+            "currency": data.get("currency", currency),
             "last_updated": now,
             "uploaded_by": uploaded_by,
             "receipt_date": receipt_date,

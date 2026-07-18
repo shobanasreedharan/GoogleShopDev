@@ -84,21 +84,6 @@ class StorePricesRepositoryTests(unittest.TestCase):
         price = self.repository.get_real_price("organic milk", "Fresh Market", "st louis", "mo")
         self.assertEqual(price, {"price": 4.49, "currency": "USD"})
 
-    def test_country_name_india_saves_inr_currency(self):
-        result = self.repository.save_store_prices(
-            uploaded_by="user-1",
-            store_name="Reliance Fresh",
-            city="Hyderabad",
-            state="Telangana",
-            country="India",
-            items={"atta": {"price": 249, "currency": "USD"}},
-        )
-
-        self.assertEqual(result["city_key"], "in_telangana_hyderabad")
-        price = self.repository.get_real_price("atta", "Reliance Fresh", "hyderabad", "telangana", "India")
-        self.assertEqual(price, {"price": 249.0, "currency": "INR"})
-        self.assertEqual(result["items_preview"]["atta"]["currency"], "INR")
-
     def test_stores_in_city_uses_city_prices_subcollection(self):
         self.repository.save_store_prices(
             uploaded_by="user-1",

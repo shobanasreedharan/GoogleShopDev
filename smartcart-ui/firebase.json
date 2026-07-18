@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "target": "buildweek",
     "public": "build",
     "ignore": [
       "firebase.json",

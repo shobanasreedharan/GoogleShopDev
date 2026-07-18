@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "hackathon-grocery-ai-498023"
-  }
+  },
+  "targets": {
+    "smartcart-ai-dev": {
+      "hosting": {
+        "buildweek": [
+          "buildweek-smartcart"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

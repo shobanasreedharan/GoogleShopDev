@@ -22,34 +22,12 @@ def _generate_with_gemini(prompt: str) -> str:
 
 
 def generate_text(prompt: str) -> str:
-    """Preserve the existing multi-meal provider without importing it for single meals."""
-    from backend.core.qwen_client import generate_text as generate_multi_meal_text
-
-    return generate_multi_meal_text(prompt)
+    """Multi-meal planning uses Gemini directly (GPT-5.6 integration is scoped to chat and single-meal only)."""
+    return _generate_with_gemini(prompt)
 
 
 def _cache_key(meal: str, dietary: str) -> str:
     return build_recipe_cache_key(meal, dietary)
-
-
-def _fallback_ingredients_for_meal(meal: str) -> list[str]:
-    from backend.ai.fallback_engine import fallback_ingredients
-
-    ingredients_by_meal = fallback_ingredients({"meal_1": meal})
-    return ingredients_by_meal.get("meal_1", [])
-
-
-def _single_meal_fallback(meal: str, manual_items: list) -> Dict[str, Any]:
-    fallback_items = list(dict.fromkeys(
-        item.lower().strip()
-        for item in [*manual_items, *_fallback_ingredients_for_meal(meal)]
-        if isinstance(item, str) and item.strip()
-    ))
-    result = _fallback(fallback_items)
-    result["_source"] = "fallback"
-    result["_gemini_called"] = False
-    result["instructions"] = []
-    return result
 
 
 def _build_single_meal_prompt(weekly_meals: dict, dietary: str, manual_items: list) -> str:
