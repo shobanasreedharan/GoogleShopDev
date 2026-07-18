@@ -461,8 +461,13 @@ function PantryPage({ getToken }) {
         headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
         body: JSON.stringify({ items }),
       });
-      if (!res.ok) throw new Error("Save failed");
-      setMsg({ type:"success", text:`✓ Pantry saved — ${items.length} items` });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Save failed");
+      }
+      const savedItems = json?.result?.items;
+      if (Array.isArray(savedItems)) setItems(savedItems);
+      setMsg({ type:"success", text:`✓ Pantry saved — ${(savedItems || items).length} items` });
     } catch (e) {
       setMsg({ type:"error", text:`⚠ ${e.message}` });
     } finally { setSaving(false); }
@@ -1125,13 +1130,17 @@ export default function SmartCartAI() {
   }, [user, authLoading, getToken]);
 
   const syncPantry = async (items) => {
-    if (!items?.length || !user) return;
+    if (!user) return;
     const token = await getToken();
-    fetch(`${BASE_URL}/pantry`, {
+    const res = await fetch(`${BASE_URL}/pantry`, {
       method:"PUT",
       headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-      body: JSON.stringify({ items }),
-    }).catch(()=>{});
+      body: JSON.stringify({ items: Array.isArray(items) ? items : [] }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.detail || json?.error || "Pantry sync failed");
+    }
   };
 
   const handleRegenerate = async () => {
@@ -1204,7 +1213,7 @@ export default function SmartCartAI() {
       const json = await res.json();
       await new Promise(r=>setTimeout(r,100));
       setData(json); setActiveTab("list");
-      syncPantry(pantryItems);
+      syncPantry(pantryItems).catch(e => console.warn("Pantry sync failed", e));
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
     } catch(e) {
       setError(e.message||"Something went wrong.");

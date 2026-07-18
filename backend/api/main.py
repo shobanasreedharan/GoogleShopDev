@@ -35,6 +35,7 @@ from backend.db.rate_limit_repository import (
 )
 import base64
 from backend.db.store_prices_repository import save_store_prices
+from backend.db.pantry_repository import get_pantry, save_pantry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -311,30 +312,50 @@ If no backend tools matched this message, answer normally without claiming you c
 # /debug/pantry/{user_id} removed — it let anyone query any user's pantry by
 # guessing a uid, with no auth check. Replaced with an auth-protected version
 # that only returns the caller's own pantry.
+def _normalize_pantry_items(raw_items) -> list[str]:
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=400, detail="items must be a list")
+
+    normalized = []
+    seen = set()
+    for item in raw_items:
+        if isinstance(item, str):
+            value = item.strip().lower()
+        elif isinstance(item, dict):
+            value = str(item.get("name") or item.get("item") or "").strip().lower()
+        else:
+            continue
+        if value and value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
 @app.get("/debug/pantry/me")
 async def debug_pantry_me(user: dict = Depends(get_current_user)):
+    uid = user["uid"]
     try:
-        result = await call_mcp_tool("get_pantry_items", {"user_id": user["uid"]})
-        return {"result": result, "success": True}
+        items = get_pantry(uid)
+        return {"result": {"user_id": uid, "items": items, "count": len(items)}, "success": True}
     except Exception as e:
-        return {"error": str(e), "success": False}
+        print(f"[debug_pantry_me] failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/pantry")
 async def update_pantry(body: dict, user: dict = Depends(get_current_user)):
     uid = user["uid"]  # verified, not from URL
+    items = _normalize_pantry_items(body.get("items", []))
+    print(f"[pantry] updating {uid}: {items}")
     try:
-        items = body.get("items", [])
-        print(f"[pantry] updating {uid}: {items}")
-        result = await call_mcp_tool("update_pantry_items", {
-            "user_id": uid,
-            "items": items
-        })
+        result = save_pantry(uid, items)
         print(f"[update_pantry] result: {result}")
         return {"result": result, "success": True}
     except Exception as e:
         print(f"[update_pantry] failed: {e}")
-        return {"error": str(e), "success": False}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/debug/tools")
