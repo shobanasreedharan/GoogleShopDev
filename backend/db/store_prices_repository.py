@@ -17,6 +17,58 @@ COUNTRY_CURRENCY_MAP = {
     "AE": "AED",
 }
 
+COUNTRY_ALIASES = {
+    "america": "US",
+    "australia": "AU",
+    "bharat": "IN",
+    "canada": "CA",
+    "great britain": "GB",
+    "india": "IN",
+    "singapore": "SG",
+    "uae": "AE",
+    "united arab emirates": "AE",
+    "united kingdom": "GB",
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+}
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).lower()
+
+
+def _make_id(value: str) -> str:
+    normalized = _normalize_text(value)
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+    return normalized.strip("_") or "unknown"
+
+
+def normalize_city(city: str) -> str:
+    return _normalize_text(city)
+
+
+def normalize_state(state: str) -> str:
+    return _normalize_text(state)
+
+
+def normalize_country(country: str) -> str:
+    raw = (country or "US").strip()
+    if not raw:
+        return "US"
+    upper = raw.upper()
+    if upper in COUNTRY_CURRENCY_MAP:
+        return upper
+    return COUNTRY_ALIASES.get(_normalize_text(raw), upper)
+
+
+def _city_key(city: str, state: str = "", country: str = "US") -> str:
+    return _make_id("_".join([normalize_country(country), normalize_state(state), normalize_city(city)]))
+
+
+def _item_key(item: str) -> str:
+    return _make_id(item)
+
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip()).lower()
@@ -49,12 +101,8 @@ def _item_key(item: str) -> str:
 
 
 def get_currency_for_country(country: str) -> str:
-    """Resolve an ISO country code to a currency code. Defaults to USD only
-    if the country is unknown/blank — every real caller should be passing
-    a resolved country from location.py, not relying on this default."""
-    if not country:
-        return "USD"
-    return COUNTRY_CURRENCY_MAP.get(country.upper().strip(), "USD")
+    """Resolve an ISO country code/name to a currency code."""
+    return COUNTRY_CURRENCY_MAP.get(normalize_country(country), "USD")
 
 
 def _make_store_id(store_name: str, city: str, state: str) -> str:
