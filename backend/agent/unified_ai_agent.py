@@ -244,6 +244,8 @@ def run_unified_ai(
             result = _format_response(parsed, source=model_used)
 
             shopping_list = [item.lower() for item in result["shopping_list"]]
+            if not shopping_list:
+                raise ValueError("single-meal generation returned an empty shopping list")
             instructions  = parsed.get("instructions", [])
 
             if shopping_list:
@@ -264,10 +266,8 @@ def run_unified_ai(
             return result
 
         except Exception as e:
-            print(f"[unified_ai] Gemini failed (single): {e}")
-            result = _fallback(manual_items)
-            result["_gemini_called"] = False
-            return result
+            print(f"[unified_ai] Single-meal generation failed; using deterministic meal fallback: {e}")
+            return _single_meal_fallback(meal, manual_items)
 
     # ─── MULTI MEAL ──────────────────────────────────────────────────────────
     cached_meals:   dict[str, list] = {}
