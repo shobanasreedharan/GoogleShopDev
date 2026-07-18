@@ -18,7 +18,14 @@ from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
 from backend.agent.agent import create_agent
+from backend.agent.chat_tool_router import (
+    build_chat_response_payload,
+    build_tool_context,
+    route_chat_tools,
+)
+from backend.agent.cart_optimization_agent import build_cart_optimization_plan
 from backend.core.pipeline import run_grocery_pipeline
+from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
 from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
 from backend.db.rate_limit_repository import (
@@ -29,6 +36,7 @@ from backend.db.rate_limit_repository import (
 )
 import base64
 from backend.db.store_prices_repository import save_store_prices
+from backend.db.pantry_repository import get_pantry, save_pantry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -141,6 +149,11 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
 
+class CartOptimizationRequest(BaseModel):
+    shopping_list: List[str]
+    substitutions: Dict[str, object] = {}
+    budget: float = 100
+
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
     media_type:   str        # "image/jpeg" | "image/png" | "application/pdf"
@@ -251,6 +264,28 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/optimize-cart-agent")
+async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[optimize-cart-agent] request received for user={uid}")
+    try:
+        return build_cart_optimization_plan(
+            user_id=uid,
+            shopping_list=request.shopping_list,
+            substitutions=request.substitutions,
+            budget=request.budget,
+        )
+    except ValueError as e:
+        print(f"[optimize-cart-agent] bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[optimize-cart-agent] failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
@@ -261,59 +296,95 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         return {
             "response": f"⚠ {chat_check['message']}",
             "session_id": req.session_id,
+            "steps": [],
+            "cards": {"shopping_list": [], "stores": [], "recipes": []},
+            "usage": {"used": chat_check["used"], "limit": chat_check["limit"]},
             "rate_limited": True,
         }
 
-    pantry_data = await call_mcp_tool("get_pantry_items", {"user_id": uid})
+    tool_results = route_chat_tools(req.message, uid)
+    tool_context = build_tool_context(tool_results)
 
     prompt = f"""You are SmartCart, an AI grocery and meal planning assistant.
 
-The user's pantry contains: {pantry_data}
+Backend tool results, if any:
+{tool_context}
 
 User question: {req.message}
 
-Answer directly and concisely using the pantry data above."""
+Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
+If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    from vertexai.generative_models import GenerativeModel
-    model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
-    response = model.generate_content(prompt)
+    # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
+    def generate_with_gemini(chat_prompt: str) -> str:
+        from vertexai.generative_models import GenerativeModel
+
+        model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+        return model.generate_content(chat_prompt).text
+
+    response_text, _model_used = generate_primary_or_fallback(
+        prompt,
+        generate_with_gemini,
+        log_prefix="chat",
+    )
 
     increment_usage(uid, "chat")
 
-    return {
-        "response": response.text,
-        "session_id": req.session_id,
-        "usage": {"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
-    }
+    return build_chat_response_payload(
+        response_text=response_text,
+        session_id=req.session_id,
+        tool_results=tool_results,
+        usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
+    )
 
 
 # /debug/pantry/{user_id} removed — it let anyone query any user's pantry by
 # guessing a uid, with no auth check. Replaced with an auth-protected version
 # that only returns the caller's own pantry.
+def _normalize_pantry_items(raw_items) -> list[str]:
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=400, detail="items must be a list")
+
+    normalized = []
+    seen = set()
+    for item in raw_items:
+        if isinstance(item, str):
+            value = item.strip().lower()
+        elif isinstance(item, dict):
+            value = str(item.get("name") or item.get("item") or "").strip().lower()
+        else:
+            continue
+        if value and value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
 @app.get("/debug/pantry/me")
 async def debug_pantry_me(user: dict = Depends(get_current_user)):
+    uid = user["uid"]
     try:
-        result = await call_mcp_tool("get_pantry_items", {"user_id": user["uid"]})
-        return {"result": result, "success": True}
+        items = get_pantry(uid)
+        return {"result": {"user_id": uid, "items": items, "count": len(items)}, "success": True}
     except Exception as e:
-        return {"error": str(e), "success": False}
+        print(f"[debug_pantry_me] failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/pantry")
 async def update_pantry(body: dict, user: dict = Depends(get_current_user)):
     uid = user["uid"]  # verified, not from URL
+    items = _normalize_pantry_items(body.get("items", []))
+    print(f"[pantry] updating {uid}: {items}")
     try:
-        items = body.get("items", [])
-        print(f"[pantry] updating {uid}: {items}")
-        result = await call_mcp_tool("update_pantry_items", {
-            "user_id": uid,
-            "items": items
-        })
+        result = save_pantry(uid, items)
         print(f"[update_pantry] result: {result}")
         return {"result": result, "success": True}
     except Exception as e:
         print(f"[update_pantry] failed: {e}")
-        return {"error": str(e), "success": False}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/debug/tools")

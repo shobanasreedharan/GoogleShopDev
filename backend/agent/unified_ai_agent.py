@@ -1,9 +1,11 @@
 from typing import Dict, Any
 import json
+import os
 from dotenv import load_dotenv
 
-from backend.core.qwen_client import generate_text
+from backend.core.gpt56_client import generate_primary_or_fallback
 from backend.db.recipe_cache_repository import (
+    build_recipe_cache_key,
     get_cached_recipe,
     save_recipe_cache
 )
@@ -11,8 +13,23 @@ from backend.db.recipe_cache_repository import (
 load_dotenv()
 
 
+def _generate_with_gemini(prompt: str) -> str:
+    """Keep the established Gemini generation path available as a fallback."""
+    from vertexai.generative_models import GenerativeModel
+
+    model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+    return model.generate_content(prompt).text
+
+
+def generate_text(prompt: str) -> str:
+    """Preserve the existing multi-meal provider without importing it for single meals."""
+    from backend.core.qwen_client import generate_text as generate_multi_meal_text
+
+    return generate_multi_meal_text(prompt)
+
+
 def _cache_key(meal: str, dietary: str) -> str:
-    return f"{meal.strip().lower()}|{dietary.strip().lower()}"
+    return build_recipe_cache_key(meal, dietary)
 
 
 def _build_single_meal_prompt(weekly_meals: dict, dietary: str, manual_items: list) -> str:
@@ -195,7 +212,7 @@ def run_unified_ai(
                 substitutions = cached.get("substitutions", {})
                 nutrition     = cached.get("nutrition_report", {})
                 instructions  = cached.get("instructions", [])
-                if ingredients and substitutions and nutrition:
+                if ingredients:
                     print(f"[unified_ai] Full cache hit: '{key}' — skipping Gemini")
                     result = _format_response({
                         "shopping_list":    ingredients,
@@ -207,24 +224,26 @@ def run_unified_ai(
                     return result
                 print(f"[unified_ai] Partial cache hit: '{key}' — calling Gemini")
 
-        # Gemini limit check
-        if not gemini_allowed:
-            print(f"[unified_ai] Gemini limit reached — returning fallback for '{key}'")
-            result = _fallback(manual_items)
-            result["_gemini_called"] = False
-            return result
-
-        # Call Qwen
+        # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
         prompt = _build_single_meal_prompt(weekly_meals, dietary, manual_items)
         try:
-            text = generate_text(prompt).strip()
+            def generate_fallback(single_meal_prompt: str) -> str:
+                if not gemini_allowed:
+                    raise RuntimeError("Gemini limit reached")
+                return _generate_with_gemini(single_meal_prompt)
+
+            text, model_used = generate_primary_or_fallback(
+                prompt,
+                generate_fallback,
+                log_prefix="unified_ai",
+            )
             if "```" in text:
                 text = text.split("```")[1]
                 if text.lower().startswith("json"):
                     text = text[4:]
                 text = text.strip()
             parsed = json.loads(text)
-            result = _format_response(parsed, source="gemini")
+            result = _format_response(parsed, source=model_used)
 
             shopping_list = [item.lower() for item in result["shopping_list"]]
             instructions  = parsed.get("instructions", [])
@@ -234,7 +253,7 @@ def run_unified_ai(
                     user_id=user_id,
                     meal=key,
                     ingredients=shopping_list,
-                    source="gemini",
+                    source=model_used,
                     nutrition=result["nutrition_report"],
                     substitutions=result.get("substitutions", {}),
                     instructions=instructions,
@@ -243,7 +262,7 @@ def run_unified_ai(
 
             result["shopping_list"]  = shopping_list
             result["instructions"]   = instructions
-            result["_gemini_called"] = True
+            result["_gemini_called"] = model_used == "gemini"
             return result
 
         except Exception as e:
