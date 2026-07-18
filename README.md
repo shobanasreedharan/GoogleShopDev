@@ -95,7 +95,7 @@ This means the more the app is used, the cheaper and faster it gets
 |---|---|
 | Frontend | React, Firebase Hosting |
 | Backend | FastAPI, Python |
-| AI | Google Gemini 2.5 Flash via Vertex AI |
+| AI | GPT-5.6 (primary) with Gemini 2.5 Flash fallback via Vertex AI |
 | MCP | FastMCP (Model Context Protocol) |
 | Database | MongoDB Atlas |
 | Infrastructure | Google Cloud Run, Google Container Registry |
@@ -134,9 +134,20 @@ GEMINI_MODEL_NAME=gemini-2.5-flash
 GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_CLOUD_LOCATION=us-central1
 GOOGLE_MAPS_API_KEY=your-maps-api-key
+OPENAI_API_KEY=your-openai-api-key
 ```
 
 > ⚠️ Never commit `.env` files or API keys to the repository.
+
+### GPT-5.6 primary model and Gemini fallback
+
+GPT-5.6 is the primary model for `/chat` final responses and single-meal recipe
+generation. If the GPT-5.6 request fails or returns no usable text, SmartCart
+automatically uses the existing Gemini path so these user-facing flows remain
+resilient. This is meaningful GPT-5.6 usage—not decorative—because it produces
+the final grounded chat answer and the complete single-meal recipe plan. Set
+`OPENAI_API_KEY` in your local `.env` (use `.env.example` as the safe template)
+before running those primary-model paths.
 
 ---
 
@@ -184,4 +195,3 @@ This project is publicly viewable for portfolio and demonstration purposes only.
 - [email](shobana.sreedharan@gmail.com)
 
 - [LinkedIn](https://www.linkedin.com/in/shobana-sreedharan-4711801a/)
-
