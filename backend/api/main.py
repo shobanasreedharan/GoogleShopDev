@@ -124,7 +124,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://buildweek-smartcart.web.app",
+        "https://qwen-smartcart.web.app",
+        "https://smartcart-ai-dev.web.app",
+        "http://localhost:3000",],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
