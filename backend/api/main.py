@@ -331,7 +331,7 @@ If no backend tools matched this message, answer normally without claiming you c
     increment_usage(uid, "chat")
 
     return build_chat_response_payload(
-        response_text=response.text,
+        response_text=response_text,
         session_id=req.session_id,
         tool_results=tool_results,
         usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
@@ -435,24 +435,21 @@ async def save_recipe(body: RecipeSaveRequest, user: dict = Depends(get_current_
 @app.post("/receipt/upload")
 async def upload_receipt(body: ReceiptUploadRequest, user: dict = Depends(get_current_user)):
     """
-    Upload a grocery receipt photo or PDF.
-    Gemini Vision extracts store name, items and prices.
-    Saved to store_prices collection for real price lookups.
+    Upload a grocery receipt photo or PDF, parse item prices, and save them to
+    shared city-level Firestore price docs.
     """
-    import base64
-    from backend.db.store_prices_repository import save_store_prices
     from vertexai.generative_models import GenerativeModel, Part as VPart
 
     uid = user["uid"]
+    print(f"[receipt/upload] received upload user={uid} media_type={body.media_type} city={body.city!r} state={body.state!r}")
 
     try:
-        # ── Decode base64 ─────────────────────────────────────────────
         try:
             image_bytes = base64.b64decode(body.image_base64)
         except Exception:
+            print("[receipt/upload] invalid base64 payload")
             raise HTTPException(status_code=400, detail="Invalid base64 image data")
 
-        # ── Build Gemini Vision prompt ────────────────────────────────
         prompt = """You are a grocery receipt parser.
 Extract ALL items and their prices from this receipt.
 Also extract the store name if visible.
@@ -474,17 +471,15 @@ RULES:
 - if you cannot read a price clearly, skip that item
 - No markdown, no explanation, valid JSON only"""
 
-        # ── Call Gemini Vision ────────────────────────────────────────
         import vertexai
         vertexai.init(project=os.getenv("GOOGLE_PROJECT_ID"), location="us-central1")
         model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
 
         media_type = body.media_type
-        if media_type == "application/pdf":
-            # Gemini handles PDF as document
-            part = VPart.from_data(data=image_bytes, mime_type="application/pdf")
-        else:
-            part = VPart.from_data(data=image_bytes, mime_type=media_type)
+        part = VPart.from_data(
+            data=image_bytes,
+            mime_type="application/pdf" if media_type == "application/pdf" else media_type,
+        )
 
         response = model.generate_content([part, prompt])
         text = response.text.strip()
@@ -494,10 +489,12 @@ RULES:
                 text = text[4:]
             text = text.strip()
 
-        parsed = json.loads(text)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"[receipt/upload] parse failed: {e}; raw={text[:500]}")
+            raise HTTPException(status_code=422, detail=f"Could not parse receipt. Try a clearer photo. ({e})")
 
-        # ── Resolve store details ─────────────────────────────────────
-        # User-provided values override Gemini-extracted values
         store_name = body.store_name.strip() or parsed.get("store_name", "").strip() or "Unknown Store"
         city = body.city.strip()
         state = body.state.strip()
@@ -505,19 +502,16 @@ RULES:
         address = body.address.strip()
         receipt_date = body.receipt_date.strip() or parsed.get("receipt_date", "")
         items = parsed.get("items", {})
+        print(f"[receipt/upload] parsed store={store_name!r} item_count={len(items) if isinstance(items, dict) else 'invalid'} preview={dict(list(items.items())[:3]) if isinstance(items, dict) else items}")
 
-        if not items:
-            return {"success": False, "error": "No items found in receipt. Please try a clearer photo."}
+        if not isinstance(items, dict) or not items:
+            raise HTTPException(status_code=422, detail="No items found in receipt. Please try a clearer photo.")
 
         if not city or not state:
-            return {
-                "success": False,
-                "error": "Could not determine store location. Please enter city and state.",
-                "store_name": store_name,
-                "items": items,
-            }
+            print(f"[receipt/upload] missing city/state city={city!r} state={state!r}")
+            raise HTTPException(status_code=400, detail="Could not determine store location. Please enter city and state.")
 
-        # ── Save to Firestore ─────────────────────────────────────────
+        print(f"[receipt/upload] saving receipt prices city={city!r} state={state!r} country={country!r}")
         result = save_store_prices(
             uploaded_by=uid,
             store_name=store_name,
@@ -530,24 +524,25 @@ RULES:
             lat=body.lat,
             lng=body.lng,
         )
+        print(f"[receipt/upload] Firestore write result: {result}")
 
         return {
             "success": True,
             "store_name": store_name,
-            "city": city,
-            "state": state,
+            "city": result["city"],
+            "state": result["state"],
             "item_count": result["item_count"],
-            "items_preview": dict(list(items.items())[:5]),  # first 5 for UI preview
+            "items_preview": result["items_preview"],
             "store_id": result["store_id"],
+            "city_key": result["city_key"],
+            "sample_path": result["sample_path"],
         }
 
     except HTTPException:
         raise
-    except json.JSONDecodeError as e:
-        return {"success": False, "error": f"Could not parse receipt. Try a clearer photo. ({e})"}
     except Exception as e:
         traceback.print_exc()
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/receipt/stores")
@@ -561,4 +556,5 @@ async def get_nearby_stores_with_prices(
         stores = get_stores_in_city(city, state)
         return {"stores": stores, "count": len(stores), "success": True}
     except Exception as e:
-        return {"error": str(e), "success": False}
+        print(f"[receipt/stores] failed city={city!r} state={state!r}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

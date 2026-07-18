@@ -905,18 +905,13 @@ function ReceiptPage({ getToken }) {
         }),
       });
 
-      const json = await res.json();
-      if (json.success) {
-        setResult(json);
-        // Auto-fill store name if Gemini extracted it
-        if (json.store_name && !storeName) setStoreName(json.store_name);
-      } else if (json.error === "Could not determine store location. Please enter city and state.") {
-        // Gemini got items but no location — show partial result and ask for location
-        setError("Receipt parsed but location is missing. Please enter City and State below and upload again.");
-        if (json.store_name && !storeName) setStoreName(json.store_name);
-      } else {
-        setError(json.error || "Upload failed");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Upload failed");
       }
+      setResult(json);
+      // Auto-fill store name if extracted from the receipt
+      if (json.store_name && !storeName) setStoreName(json.store_name);
     } catch (e) {
       setError(e.message || "Upload failed");
     } finally {
@@ -1050,7 +1045,7 @@ function ReceiptPage({ getToken }) {
           </div>
 
           <div style={{ padding: "10px 14px", borderRadius: 6, background: T.greenLight, fontSize: 12, color: T.green, fontWeight: 600 }}>
-            ✓ Real prices saved! When you generate a meal plan in {result.city}, these prices will be used instead of estimates.
+            ✓ Real prices saved to {result.city_key || result.city}. When you generate a meal plan in this city, these prices will be used instead of estimates.
           </div>
         </Card>
       )}
