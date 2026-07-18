@@ -23,6 +23,7 @@ from backend.agent.chat_tool_router import (
     build_tool_context,
     route_chat_tools,
 )
+from backend.agent.cart_optimization_agent import build_cart_optimization_plan
 from backend.core.pipeline import run_grocery_pipeline
 from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
@@ -148,6 +149,11 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
 
+class CartOptimizationRequest(BaseModel):
+    shopping_list: List[str]
+    substitutions: Dict[str, object] = {}
+    budget: float = 100
+
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
     media_type:   str        # "image/jpeg" | "image/png" | "application/pdf"
@@ -254,6 +260,28 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/optimize-cart-agent")
+async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[optimize-cart-agent] request received for user={uid}")
+    try:
+        return build_cart_optimization_plan(
+            user_id=uid,
+            shopping_list=request.shopping_list,
+            substitutions=request.substitutions,
+            budget=request.budget,
+        )
+    except ValueError as e:
+        print(f"[optimize-cart-agent] bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[optimize-cart-agent] failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

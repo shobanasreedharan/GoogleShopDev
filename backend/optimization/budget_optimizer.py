@@ -140,7 +140,8 @@ def find_best_worst_stores(shopping_list: list) -> dict:
 
 def optimize_for_budget(
     shopping_list: list,
-    budget: float
+    budget: float,
+    available_substitutions: dict | None = None
 ) -> dict:
     """
     Compares cost at cheapest vs most expensive store.
@@ -172,6 +173,7 @@ def optimize_for_budget(
     optimized_cost = best_worst["cheapest_total"]    # best case cost
     money_saved    = round(original_cost - optimized_cost, 2)
 
+    substitution_table = {**CHEAP_SUBSTITUTIONS, **(available_substitutions or {})}
     substitutions  = []
     optimized_list = list(shopping_list)
 
@@ -182,8 +184,8 @@ def optimize_for_budget(
 
         for item in optimized_list:
             lower = item.lower()
-            if lower in CHEAP_SUBSTITUTIONS:
-                cheaper = CHEAP_SUBSTITUTIONS[lower]
+            if lower in substitution_table:
+                cheaper = substitution_table[lower]
                 substitutions.append({
                     "original":    item,
                     "replacement": cheaper

@@ -30,13 +30,15 @@ def generate_primary_or_fallback(
     fallback: Callable[[str], str],
     *,
     log_prefix: str,
+    primary: Callable[[str], str] | None = None,
 ) -> tuple[str, str]:
-    """Use GPT-5.6 first, then the supplied Gemini call if it cannot respond."""
+    """Use the primary generator first, then the supplied fallback if it cannot respond."""
     try:
-        text = generate_gpt56_text(prompt)
-        model_used = GPT56_MODEL
+        text = (primary or generate_gpt56_text)(prompt)
+        model_used = "primary" if primary else GPT56_MODEL
     except Exception as error:
-        print(f"[{log_prefix}] GPT-5.6 failed; falling back to Gemini: {error}")
+        failed_label = "primary generator" if primary else "GPT-5.6"
+        print(f"[{log_prefix}] {failed_label} failed; falling back to Gemini: {error}")
         text = fallback(prompt)
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Gemini returned an empty or invalid response")
