@@ -8,6 +8,7 @@ from backend.utils.sanitizers import clean_shopping_list, clean_stores
 from backend.agent.unified_ai_agent import run_unified_ai
 from backend.validators.nutrition_validator import validate_nutrition
 from backend.db.recipe_cache_repository import (
+    build_recipe_cache_key,
     get_cached_recipe,
     save_recipe_cache
 )
@@ -71,8 +72,7 @@ def _persist_substitutions_to_cache(
     )
 
     meal = list(weekly_meals.values())[0]
-    meal_key  = " ".join(meal.strip().lower().split())  # collapse double spaces
-    cache_key = f"{meal_key}|{dietary.lower().strip()}"
+    cache_key = build_recipe_cache_key(meal, dietary)
 
     cached = get_cached_recipe(user_id, cache_key)
     # Safe fallback now — this is genuinely this meal's own list,
@@ -88,7 +88,7 @@ def _persist_substitutions_to_cache(
     existing_subs = cached.get("substitutions", {}) if cached else {}
     merged_subs = {**existing_subs, **selected_substitutions}
 
-    save_recipe_cache(
+    write_result = save_recipe_cache(
         user_id=user_id,
         meal=cache_key,
         ingredients=updated,
@@ -97,7 +97,10 @@ def _persist_substitutions_to_cache(
         substitutions=merged_subs
     )
 
-    print(f"[pipeline] Cache updated for '{meal}' with {len(selected_substitutions)} substitution(s)")
+    if write_result.get("success"):
+        print(f"[pipeline] Cache updated for '{meal}' with {len(selected_substitutions)} substitution(s)")
+    else:
+        print(f"[pipeline] Failed to update cache for '{meal}': {write_result.get('error')}")
 
 
 def run_grocery_pipeline(
@@ -305,6 +308,7 @@ def run_grocery_pipeline(
         "applied_substitutions":   selected_substitutions,
         "weekly_meals":            weekly_meals,
         "_gemini_called":          gemini_called,
+        "generation_source":       ai_result.get("_source", "unknown"),
     }
 
 def main():
