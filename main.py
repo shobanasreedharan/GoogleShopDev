@@ -18,7 +18,13 @@ from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
 from backend.agent.agent import create_agent
+from backend.agent.chat_tool_router import (
+    build_chat_response_payload,
+    build_tool_context,
+    route_chat_tools,
+)
 from backend.core.pipeline import run_grocery_pipeline
+from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
 from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
 from backend.db.rate_limit_repository import (
@@ -261,30 +267,45 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         return {
             "response": f"⚠ {chat_check['message']}",
             "session_id": req.session_id,
+            "steps": [],
+            "cards": {"shopping_list": [], "stores": [], "recipes": []},
+            "usage": {"used": chat_check["used"], "limit": chat_check["limit"]},
             "rate_limited": True,
         }
 
-    pantry_data = await call_mcp_tool("get_pantry_items", {"user_id": uid})
+    tool_results = route_chat_tools(req.message, uid)
+    tool_context = build_tool_context(tool_results)
 
     prompt = f"""You are SmartCart, an AI grocery and meal planning assistant.
 
-The user's pantry contains: {pantry_data}
+Backend tool results, if any:
+{tool_context}
 
 User question: {req.message}
 
-Answer directly and concisely using the pantry data above."""
+Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
+If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    from vertexai.generative_models import GenerativeModel
-    model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
-    response = model.generate_content(prompt)
+    # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
+    def generate_with_gemini(chat_prompt: str) -> str:
+        from vertexai.generative_models import GenerativeModel
+        model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+        return model.generate_content(chat_prompt).text
+
+    response_text, _model_used = generate_primary_or_fallback(
+        prompt,
+        generate_with_gemini,
+        log_prefix="chat",
+    )
 
     increment_usage(uid, "chat")
 
-    return {
-        "response": response.text,
-        "session_id": req.session_id,
-        "usage": {"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
-    }
+    return build_chat_response_payload(
+        response_text=response_text,
+        session_id=req.session_id,
+        tool_results=tool_results,
+        usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
+    )
 
 
 # /debug/pantry/{user_id} removed — it let anyone query any user's pantry by

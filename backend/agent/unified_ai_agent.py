@@ -22,10 +22,8 @@ def _generate_with_gemini(prompt: str) -> str:
 
 
 def generate_text(prompt: str) -> str:
-    """Preserve the existing multi-meal provider without importing it for single meals."""
-    from backend.core.qwen_client import generate_text as generate_multi_meal_text
-
-    return generate_multi_meal_text(prompt)
+    """Multi-meal planning uses Gemini directly (GPT-5.6 integration is scoped to chat and single-meal only)."""
+    return _generate_with_gemini(prompt)
 
 
 def _cache_key(meal: str, dietary: str) -> str:
