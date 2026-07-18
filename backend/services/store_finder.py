@@ -228,7 +228,7 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
         real_price = None
         if city and state:
             try:
-                real_price = get_real_price(item, store_name, city, state)
+                real_price = get_real_price(item, store_name, city, state, country)
             except Exception:
                 pass
 
