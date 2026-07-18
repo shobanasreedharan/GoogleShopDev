@@ -290,7 +290,6 @@ If no backend tools matched this message, answer normally without claiming you c
     # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
     def generate_with_gemini(chat_prompt: str) -> str:
         from vertexai.generative_models import GenerativeModel
-
         model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
         return model.generate_content(chat_prompt).text
 
@@ -303,7 +302,7 @@ If no backend tools matched this message, answer normally without claiming you c
     increment_usage(uid, "chat")
 
     return build_chat_response_payload(
-        response_text=response_text,
+        response_text=response.text,
         session_id=req.session_id,
         tool_results=tool_results,
         usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
