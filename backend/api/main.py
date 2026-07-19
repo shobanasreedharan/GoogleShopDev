@@ -315,10 +315,10 @@ User question: {req.message}
 Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
 If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
+    # Gemini is primary for this build — OPENAI_API_KEY is intentionally unset
+    # so generate_primary_or_fallback() always routes to Gemini via fast-fail.
     def generate_with_gemini(chat_prompt: str) -> str:
         from vertexai.generative_models import GenerativeModel
-
         model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
         return model.generate_content(chat_prompt).text
 

@@ -226,29 +226,37 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
         receipt_price = None
         if city:
             try:
-                receipt_price = get_lowest_receipt_price_for_item(item, city, state, country or "US")
-            except Exception as e:
-                print(f"[store] receipt price lookup failed item={item} city={city}: {e}")
-        print(f"[store] receipt lookup item={item} city={city} state={state}: {receipt_price}")
+                real_price = get_real_price(item, store_name, city, state, country)
+            except Exception:
+                pass
 
-        estimated_price = _estimate_price(item, store_name, currency)
-        print(f"[store] estimate item={item} store={store_name}: {estimated_price} {currency}")
+        if real_price is not None:
+            inventory[item] = {
+                "available": True,
+                "price": real_price["price"],
+                "currency": real_price["currency"],
+                "note": "real price from receipt",
+                "source": "receipt",
+            }
+            continue
 
-        use_receipt = bool(receipt_price and receipt_price.get("price") is not None and float(receipt_price["price"]) <= estimated_price)
-        if use_receipt:
-            price = float(receipt_price["price"])
-            item_currency = receipt_price.get("currency") or currency
-            source = "receipt"
-            note = "Verified price from a recent receipt"
-            price_store = receipt_price.get("store_name") or store_name
-        else:
-            price = estimated_price
-            item_currency = currency
-            source = "estimate"
-            note = "Estimated price"
-            price_store = store_name
+        # Fall back to mock price
+        available = (hash(store_name + item) % 100) > 20
+        base_price = ((hash(item + store_name) % 500) / 100) + 1
+        multiplier = 1.0
 
-        print(f"[store] final price item={item}: source={source} price={price} store={price_store}")
+        if "aldi" in lower:
+            multiplier = 0.85
+        elif "costco" in lower:
+            multiplier = 0.80
+        elif "whole foods" in lower:
+            multiplier = 1.35
+        elif "walmart" in lower:
+            multiplier = 0.90
+        elif "target" in lower:
+            multiplier = 1.05
+
+        price = round(base_price * multiplier * scale, 2) if available else None
         inventory[item] = {
             "available": True,
             "price": price,

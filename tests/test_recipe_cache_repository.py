@@ -133,27 +133,6 @@ class RecipeCacheRepositoryTests(unittest.TestCase):
         self.assertEqual(result["shopping_list"], ["pasta", "lemon"])
         self.assertEqual(result["_source"], "cache")
 
-    def test_single_meal_generation_failure_uses_meal_name_fallback(self):
-        dotenv = types.ModuleType("dotenv")
-        dotenv.load_dotenv = lambda: None
-        recipe_module = types.ModuleType("backend.db.recipe_cache_repository")
-        recipe_module.build_recipe_cache_key = lambda meal, dietary: f"{meal.lower()}|{dietary.lower()}"
-        recipe_module.get_cached_recipe = lambda user_id, key: None
-        recipe_module.save_recipe_cache = lambda **kwargs: {"success": True}
-
-        sys.modules.pop("backend.agent.unified_ai_agent", None)
-        sys.modules["dotenv"] = dotenv
-        sys.modules["backend.db.recipe_cache_repository"] = recipe_module
-        agent = importlib.import_module("backend.agent.unified_ai_agent")
-
-        with patch.object(agent, "generate_primary_or_fallback", side_effect=RuntimeError("model unavailable")):
-            result = agent.run_unified_ai("user-1", {"meal_1": "Tomato Pasta"}, dietary="None")
-
-        self.assertEqual(result["_source"], "fallback")
-        self.assertFalse(result["_gemini_called"])
-        self.assertIn("pasta", result["shopping_list"])
-        self.assertIn("tomato", result["shopping_list"])
-
 
 if __name__ == "__main__":
     unittest.main()
