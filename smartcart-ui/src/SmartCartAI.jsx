@@ -170,11 +170,14 @@ function buildMatrix(stores) {
   const allItems = new Set();
   stores.forEach(s => (s.items||[]).forEach(i => allItems.add(i.item)));
   const items = [...allItems].sort();
-  const matrix = {}, totals = {}, currencies = {};
+  const matrix = {}, totals = {}, currencies = {}, sources = {}, notes = {}, priceStores = {};
   stores.forEach(s => {
-    const n = s.store_name; totals[n]=0; matrix[n]={};
+    const n = s.store_name; totals[n]=0; matrix[n]={}; sources[n]={}; notes[n]={}; priceStores[n]={};
     (s.items||[]).forEach(i => {
       matrix[n][i.item]=i.price;
+      sources[n][i.item]=i.source || "estimate";
+      notes[n][i.item]=i.note || (i.source === "receipt" ? "Verified price from a recent receipt" : "Estimated price");
+      priceStores[n][i.item]=i.price_store || n;
       totals[n]+=i.price;
       if (!currencies[n]) currencies[n] = i.currency || "USD";
     });
@@ -185,7 +188,7 @@ function buildMatrix(stores) {
     stores.forEach(s => { const p=matrix[s.store_name]?.[item]; if(p!==undefined&&p<minP){minP=p;minS=s.store_name;} });
     if(minS){ wCounts[minS]=(wCounts[minS]||0)+1; wTotals[minS]=(wTotals[minS]||0)+minP; }
   });
-  return { items, matrix, totals, currencies, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
+  return { items, matrix, totals, currencies, sources, notes, priceStores, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
 }
 
 const CURRENCY_SYMBOLS = { USD:"$", INR:"₹", GBP:"£", CAD:"CA$", AUD:"A$", SGD:"S$", AED:"AED " };
@@ -1527,7 +1530,7 @@ export default function SmartCartAI() {
                                   return (
                                     <tr key={item} style={{ background:ri%2===0?T.surfaceAlt:T.surface }}>
                                       <td style={{ padding:"8px 12px", textTransform:"capitalize", fontWeight:500 }}>{item}</td>
-                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?formatPrice(p,curr):<span title="Not available">N/A</span>}</td>; })}
+                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; const source=pm.sources[s.store_name]?.[item]; const sourceStore=pm.priceStores[s.store_name]?.[item]; const note=pm.notes[s.store_name]?.[item]; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?<><div>{formatPrice(p,curr)}</div><div title={note} style={{ fontFamily:"'Lato',sans-serif", fontSize:10, fontWeight:700, color:source==="receipt"?T.green:T.inkSec, marginTop:2 }}>{source==="receipt"?"🧾 Receipt":"Estimate"}{source==="receipt"&&sourceStore&&sourceStore!==s.store_name?` · ${sourceStore}`:""}</div></>:<span title="Not available">N/A</span>}</td>; })}
                                     </tr>
                                   );
                                 })}
@@ -1537,7 +1540,7 @@ export default function SmartCartAI() {
                                 </tr>
                               </tbody>
                             </table>
-                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store.</p>
+                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store. 🧾 Receipt = verified uploaded receipt price; Estimate = generated price estimate.</p>
                           </div>
                         </Card>
                       </>

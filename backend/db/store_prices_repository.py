@@ -226,6 +226,74 @@ def get_real_price(item: str, store_name: str, city: str, state: str, country: s
     return None
 
 
+def _iter_legacy_store_price_docs(city: str, state: str = "", country: str = "US"):
+    normalized_city = normalize_city(city)
+    normalized_state = normalize_state(state)
+    normalized_country = normalize_country(country)
+    print(f"[store_prices] query store_prices where city == {normalized_city}")
+
+    collection = db.collection(COLLECTION)
+    try:
+        docs = collection.where("city", "==", normalized_city).stream()
+    except Exception as e:
+        print(f"[store_prices] city where query unavailable, streaming store_prices instead: {e}")
+        docs = collection.stream()
+
+    for doc in docs:
+        data = doc.to_dict() or {}
+        if normalize_city(data.get("city", "")) != normalized_city:
+            continue
+        if normalized_state and normalize_state(data.get("state", "")) != normalized_state:
+            continue
+        doc_country = normalize_country(data.get("country") or country)
+        if country and doc_country != normalized_country:
+            continue
+        yield doc.id, data
+
+
+def _receipt_currency(item_data: dict, store_data: dict, requested_country: str) -> str:
+    doc_country = store_data.get("country") or requested_country
+    country_currency = get_currency_for_country(doc_country)
+    if normalize_country(doc_country) != "US":
+        return country_currency
+    return item_data.get("currency") or store_data.get("currency") or country_currency
+
+
+def get_lowest_receipt_price_for_item(item: str, city: str, state: str = "", country: str = "US"):
+    """Return the lowest matching receipt price from legacy store_prices docs for a city."""
+    normalized_item = _normalize_text(item)
+    if not normalized_item or not city:
+        return None
+
+    best = None
+    for store_id, store_data in _iter_legacy_store_price_docs(city, state, country):
+        items = store_data.get("items") or {}
+        for known_item, raw_data in items.items():
+            known_normalized = _normalize_text(known_item)
+            if not known_normalized:
+                continue
+            if known_normalized != normalized_item and known_normalized not in normalized_item and normalized_item not in known_normalized:
+                continue
+            item_data = raw_data if isinstance(raw_data, dict) else {"price": raw_data}
+            try:
+                price = float(item_data.get("price"))
+            except (TypeError, ValueError):
+                continue
+            candidate = {
+                "price": price,
+                "currency": _receipt_currency(item_data, store_data, country),
+                "store_id": store_id,
+                "store_name": store_data.get("store_name") or store_id,
+                "source": "receipt",
+                "item_name": known_normalized,
+            }
+            if best is None or candidate["price"] < best["price"]:
+                best = candidate
+
+    print(f"[store_prices] receipt lookup result item={normalized_item} city={normalize_city(city)}: {best}")
+    return best
+
+
 def save_store_prices(
     uploaded_by: str,
     store_name: str,
