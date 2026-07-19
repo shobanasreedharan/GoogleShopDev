@@ -10,3 +10,4 @@ google-cloud-aiplatform
 mcp
 google-adk
 httpx
+openai
