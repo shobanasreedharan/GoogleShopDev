@@ -1094,10 +1094,6 @@ export default function SmartCartAI() {
   const [cartOpt,      setCartOpt]      = useState(null);
   const [cartOptLoading, setCartOptLoading] = useState(false);
   const [cartOptError, setCartOptError] = useState(null);
-  const [weekPlan,     setWeekPlan]     = useState(null);
-  const [weekPlanLoading, setWeekPlanLoading] = useState(false);
-  const [weekPlanError, setWeekPlanError] = useState(null);
-  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const [userLatLng,   setUserLatLng]   = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
@@ -1188,7 +1184,7 @@ export default function SmartCartAI() {
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
   const handleGenerate = async () => {
-    setError(null); setData(null); setCartOpt(null); setCartOptError(null); setWeekPlan(null); setWeekPlanError(null); setWeekPlanSaveMsg(null); setLoading(true);
+    setError(null); setData(null); setCartOpt(null); setCartOptError(null); setLoading(true);
     const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
@@ -1248,60 +1244,6 @@ export default function SmartCartAI() {
       setCartOptError(e.message || "Cart optimization failed");
     } finally {
       setCartOptLoading(false);
-    }
-  };
-
-  const handlePlanMyWeek = async () => {
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/plan-my-week`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-        body: JSON.stringify({
-          budget: lastPayloadRef.current?.budget ?? 100,
-          dietary_instruction: dietary,
-          meal_count: 5,
-          ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
-          ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json?.success === false) {
-        throw new Error(json?.detail || json?.error || "Plan My Week failed");
-      }
-      setWeekPlan(json);
-    } catch (e) {
-      setWeekPlanError(e.message || "Plan My Week failed");
-    } finally {
-      setWeekPlanLoading(false);
-    }
-  };
-
-  const handleApproveWeekPlan = async () => {
-    if (!weekPlan?.combined_shopping_list?.length) return;
-    setWeekPlanSaveMsg(null); setWeekPlanError(null);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-        body: JSON.stringify({
-          suggested_meals: weekPlan.suggested_meals || [],
-          weekly_meals: weekPlan.weekly_meals || Object.fromEntries((weekPlan.suggested_meals || []).map((meal, i) => [`meal_${i+1}`, meal.name || meal.meal || String(meal)])),
-          shopping_list: weekPlan.combined_shopping_list || [],
-          budget_summary: weekPlan.budget_summary || {},
-          nutrition_report: weekPlan.nutrition_report || {},
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json?.success === false) {
-        throw new Error(json?.detail || json?.error || "Could not save weekly plan");
-      }
-      setManualText((weekPlan.combined_shopping_list || []).join(", "));
-      setWeekPlanSaveMsg("✓ Weekly plan approved and saved.");
-    } catch (e) {
-      setWeekPlanError(e.message || "Could not save weekly plan");
     }
   };
 
@@ -1492,7 +1434,7 @@ export default function SmartCartAI() {
                     <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
                     <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
                   </div>
-                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:T.greenLight, color:T.green, border:`1px solid ${T.green}33` }}>{weekPlanSaveMsg}</div>}
+                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
                 </div>
               )}
             </Card>
