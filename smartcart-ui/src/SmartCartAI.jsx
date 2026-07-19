@@ -1095,6 +1095,10 @@ export default function SmartCartAI() {
   const [cartOptLoading, setCartOptLoading] = useState(false);
   const [cartOptError, setCartOptError] = useState(null);
   const [userLatLng,   setUserLatLng]   = useState(null);
+  const [weekPlan,        setWeekPlan]        = useState(null);
+  const [weekPlanLoading, setWeekPlanLoading] = useState(false);
+  const [weekPlanError,   setWeekPlanError]   = useState(null);
+  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -1244,6 +1248,46 @@ export default function SmartCartAI() {
       setCartOptError(e.message || "Cart optimization failed");
     } finally {
       setCartOptLoading(false);
+    }
+  };
+
+  const handlePlanMyWeek = async () => {
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ budget: 100 }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Plan My Week failed");
+      setWeekPlan(json);
+    } catch (e) {
+      setWeekPlanError(e.message);
+    } finally {
+      setWeekPlanLoading(false);
+    }
+  };
+
+  const handleApproveWeekPlan = async () => {
+    if (!weekPlan) return;
+    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          suggested_meals: weekPlan.suggested_meals,
+          combined_shopping_list: weekPlan.combined_shopping_list,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Approve failed");
+      setWeekPlanSaveMsg("Plan saved to your profile.");
+    } catch (e) {
+      setWeekPlanError(e.message);
     }
   };
 
