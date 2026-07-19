@@ -1390,6 +1390,55 @@ export default function SmartCartAI() {
               {error && <div style={{ marginTop:"1rem", padding:"12px 16px", borderRadius:6, background:T.redLight, border:"1px solid #f5c6c3", color:T.red, fontSize:13 }}>⚠ {error}</div>}
             </Card>
 
+            <Card className="fu" style={{ marginBottom:"2rem", borderColor:weekPlanError?T.red+"55":T.blue+"33" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Plan My Week</div>
+                  <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>One agent action chains pantry, meals, shopping list, budget, and receipt-aware store prices.</div>
+                </div>
+                <button onClick={handlePlanMyWeek} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.blue, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
+                  {weekPlanLoading ? "Planning…" : "✨ Plan My Week"}
+                </button>
+              </div>
+              {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
+              {weekPlan && (
+                <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+                    {(weekPlan.suggested_meals||[]).map((meal,i)=>(
+                      <div key={`${meal.name}-${i}`} style={{ padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                        <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{meal.name}</div>
+                        <div style={{ fontSize:11, color:T.inkSec, marginTop:3 }}>{meal.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                    {[
+                      { label:"Original", value:formatPrice(Number(weekPlan.original_total||0)), color:T.red },
+                      { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total||0)), color:T.green },
+                      { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
+                    ].map(m => (
+                      <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
+                        <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <AgentTrace steps={weekPlan.steps||[]} />
+                  {!!weekPlan.combined_shopping_list?.length && (
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
+                    </div>
+                  )}
+                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
+                    <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
+                  </div>
+                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
+                </div>
+              )}
+            </Card>
+
             {loading && (
               <Card style={{ textAlign:"center", padding:"3rem" }}>
                 <div style={{ width:40, height:40, margin:"0 auto 1rem", border:`3px solid ${T.border}`, borderTop:`3px solid ${T.green}`, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
