@@ -149,10 +149,9 @@ const TABS  = [
 ];
 
 const CHAT_SUGGESTIONS = [
-  "What's in my pantry?",
-  "Suggest a vegetarian meal",
-  "What can I cook with rice and oil?",
-  "Save my current meal plan",
+  "Plan a meal from my pantry",
+  "Find the cheapest store nearby",
+  "Show me my saved recipes",
 ];
 
 const headerBtnStyle = {
@@ -171,11 +170,14 @@ function buildMatrix(stores) {
   const allItems = new Set();
   stores.forEach(s => (s.items||[]).forEach(i => allItems.add(i.item)));
   const items = [...allItems].sort();
-  const matrix = {}, totals = {}, currencies = {};
+  const matrix = {}, totals = {}, currencies = {}, sources = {}, notes = {}, priceStores = {};
   stores.forEach(s => {
-    const n = s.store_name; totals[n]=0; matrix[n]={};
+    const n = s.store_name; totals[n]=0; matrix[n]={}; sources[n]={}; notes[n]={}; priceStores[n]={};
     (s.items||[]).forEach(i => {
       matrix[n][i.item]=i.price;
+      sources[n][i.item]=i.source || "estimate";
+      notes[n][i.item]=i.note || (i.source === "receipt" ? "Verified price from a recent receipt" : "Estimated price");
+      priceStores[n][i.item]=i.price_store || n;
       totals[n]+=i.price;
       if (!currencies[n]) currencies[n] = i.currency || "USD";
     });
@@ -186,7 +188,7 @@ function buildMatrix(stores) {
     stores.forEach(s => { const p=matrix[s.store_name]?.[item]; if(p!==undefined&&p<minP){minP=p;minS=s.store_name;} });
     if(minS){ wCounts[minS]=(wCounts[minS]||0)+1; wTotals[minS]=(wTotals[minS]||0)+minP; }
   });
-  return { items, matrix, totals, currencies, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
+  return { items, matrix, totals, currencies, sources, notes, priceStores, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
 }
 
 const CURRENCY_SYMBOLS = { USD:"$", INR:"₹", GBP:"£", CAD:"CA$", AUD:"A$", SGD:"S$", AED:"AED " };
@@ -195,9 +197,119 @@ function formatPrice(amount, currency="USD") {
 }
 
 // ── Chat Panel ───────────────────────────────────────────────────────────────
+function toolLabel(name="") {
+  const labels = {
+    get_pantry_items: "Pantry inventory",
+    list_recipes: "Saved recipes",
+    compare_stores: "Store comparison",
+  };
+  return labels[name] || name.replace(/_/g, " ") || "Tool";
+}
+
+function toolIcon(step) {
+  if (step?.status === "error") return "⚠️";
+  if (step?.tool === "get_pantry_items") return "🥦";
+  if (step?.tool === "list_recipes") return "📖";
+  if (step?.tool === "compare_stores") return "🏪";
+  return "✅";
+}
+
+function moneyMaybe(value, currency="USD") {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return formatPrice(n, currency);
+}
+
+function AgentTrace({ steps=[] }) {
+  const [open, setOpen] = useState(false);
+  if (!steps?.length) return null;
+  const failures = steps.filter(s => s.status === "error").length;
+  return (
+    <div style={{ marginTop:8, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:T.surface }}>
+      <button onClick={()=>setOpen(o=>!o)} style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"7px 9px", border:"none", background:T.surfaceAlt, color:T.inkSec, cursor:"pointer", fontSize:11, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", fontFamily:"'Lato',sans-serif" }}>
+        <span>{failures ? "⚠️" : "✅"} Agent used tools · {steps.length}</span>
+        <span style={{ fontSize:13 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{ padding:"8px 10px", display:"flex", flexDirection:"column", gap:8 }}>
+          {steps.map((step, i) => (
+            <div key={`${step.tool}-${i}`} style={{ display:"grid", gridTemplateColumns:"22px 1fr", gap:8, alignItems:"start" }}>
+              <span style={{ fontSize:15, lineHeight:"20px" }}>{toolIcon(step)}</span>
+              <div>
+                <div style={{ fontSize:12, fontWeight:700, color:step.status==="error"?T.red:T.ink, textTransform:"capitalize" }}>{toolLabel(step.tool)}</div>
+                <div style={{ fontSize:11, color:step.status==="error"?T.red:T.inkSec, lineHeight:1.4 }}>{step.summary}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentCards({ cards={} }) {
+  const shopping = Array.isArray(cards.shopping_list) ? cards.shopping_list : [];
+  const stores = Array.isArray(cards.stores) ? cards.stores : [];
+  const recipes = Array.isArray(cards.recipes) ? cards.recipes : [];
+  if (!shopping.length && !stores.length && !recipes.length) return null;
+
+  return (
+    <div style={{ marginTop:8, display:"flex", flexDirection:"column", gap:8 }}>
+      {!!shopping.length && (
+        <div style={{ border:`1px solid ${T.green}33`, background:T.greenLight, borderRadius:8, padding:"9px 10px" }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.green, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:6 }}>Items</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+            {shopping.slice(0, 12).map((item, i) => (
+              <span key={`${item}-${i}`} style={{ fontSize:11, padding:"3px 7px", borderRadius:14, background:T.surface, color:T.green, border:`1px solid ${T.green}22`, textTransform:"capitalize" }}>{item}</span>
+            ))}
+            {shopping.length > 12 && <span style={{ fontSize:11, color:T.green, padding:"3px 0" }}>+{shopping.length-12} more</span>}
+          </div>
+        </div>
+      )}
+
+      {!!stores.length && (
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase" }}>Store comparison</div>
+          {stores.slice(0, 3).map((store, i) => {
+            const breakdown = Object.values(store.price_breakdown||{});
+            const currency = store.items?.[0]?.currency || breakdown?.[0]?.currency || "USD";
+            const price = moneyMaybe(store.basket_price, currency);
+            return (
+              <div key={`${store.store_name || store.brand || "store"}-${i}`} style={{ border:`1px solid ${T.border}`, background:T.surface, borderRadius:8, padding:"8px 10px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"baseline" }}>
+                  <span style={{ fontSize:12, fontWeight:800, color:T.ink }}>{store.store_name || store.brand || "Store"}</span>
+                  {price && <span style={{ fontSize:12, fontFamily:"'DM Mono',monospace", color:T.green }}>{price}</span>}
+                </div>
+                <div style={{ display:"flex", gap:10, marginTop:3, fontSize:11, color:T.inkSec }}>
+                  {Number.isFinite(Number(store.distance_km)) && <span>📍 {Number(store.distance_km).toFixed(1)} km</span>}
+                  {Number.isFinite(Number(store.final_score)) && <span>Score {Number(store.final_score).toFixed(2)}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!!recipes.length && (
+        <div style={{ border:`1px solid ${T.blue}22`, background:T.blueLight, borderRadius:8, padding:"9px 10px" }}>
+          <div style={{ fontSize:11, fontWeight:800, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:6 }}>Recipes</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+            {recipes.slice(0, 10).map((recipe, i) => {
+              const raw = recipe.meal || recipe.name || `Recipe ${i+1}`;
+              const label = String(raw).split("|")[0];
+              return <span key={`${raw}-${i}`} style={{ fontSize:11, padding:"3px 7px", borderRadius:14, background:T.surface, color:T.blue, border:`1px solid ${T.blue}22`, textTransform:"capitalize" }}>{label}</span>;
+            })}
+            {recipes.length > 10 && <span style={{ fontSize:11, color:T.blue, padding:"3px 0" }}>+{recipes.length-10} more</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatPanel({ onClose, user, getToken }) {
   const [messages, setMessages] = useState([
-    { role:"agent", text:"Hi! I'm your SmartCart AI assistant. I can check your pantry, suggest meals, and help plan your groceries. What would you like to know?" }
+    { role:"agent", text:"Hi! I'm your SmartCart AI assistant. I can check your pantry, suggest meals, and help plan your groceries. What would you like to know?", steps:[], cards:{ shopping_list:[], stores:[], recipes:[] } }
   ]);
   const [input, setInput] = useState("");
   const [loading, setChatLoading] = useState(false);
@@ -218,9 +330,15 @@ function ChatPanel({ onClose, user, getToken }) {
         body: JSON.stringify({ message:msg, user_id:user?.uid??"anonymous", session_id:sessionId }),
       });
       const json = await res.json();
-      setMessages(prev => [...prev, { role:"agent", text:json.response||"Sorry, I didn't get a response." }]);
+      setMessages(prev => [...prev, {
+        role:"agent",
+        text:json.response||"Sorry, I didn't get a response.",
+        steps:Array.isArray(json.steps)?json.steps:[],
+        cards:json.cards||{ shopping_list:[], stores:[], recipes:[] },
+        usage:json.usage||null,
+      }]);
     } catch {
-      setMessages(prev => [...prev, { role:"agent", text:"⚠ Connection error. Please try again.", isError:true }]);
+      setMessages(prev => [...prev, { role:"agent", text:"⚠ Connection error. Please try again.", steps:[], cards:{ shopping_list:[], stores:[], recipes:[] }, isError:true }]);
     } finally { setChatLoading(false); }
   };
 
@@ -239,19 +357,21 @@ function ChatPanel({ onClose, user, getToken }) {
       <div style={{ flex:1, overflowY:"auto", padding:"1rem", display:"flex", flexDirection:"column", gap:12 }}>
         {messages.map((msg,i) => (
           <div key={i} className={msg.role==="user"?"chat-msg-user":"chat-msg-agent"} style={{ display:"flex", justifyContent:msg.role==="user"?"flex-end":"flex-start" }}>
-            <div style={{ maxWidth:"85%", padding:"10px 14px", borderRadius:msg.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px", background:msg.role==="user"?T.ink:msg.isError?T.redLight:T.surfaceAlt, color:msg.role==="user"?"#FFF":msg.isError?T.red:T.ink, fontSize:13, lineHeight:1.6, border:`1px solid ${msg.role==="user"?"transparent":msg.isError?T.red+"33":T.border}` }}>
-              {msg.text}
+            <div style={{ maxWidth:"85%" }}>
+              <div style={{ padding:"10px 14px", borderRadius:msg.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px", background:msg.role==="user"?T.ink:msg.isError?T.redLight:T.surfaceAlt, color:msg.role==="user"?"#FFF":msg.isError?T.red:T.ink, fontSize:13, lineHeight:1.6, border:`1px solid ${msg.role==="user"?"transparent":msg.isError?T.red+"33":T.border}` }}>
+                {msg.text}
+              </div>
+              {msg.role==="agent" && !msg.isError && <AgentTrace steps={msg.steps||[]} />}
+              {msg.role==="agent" && !msg.isError && <AgentCards cards={msg.cards||{}} />}
             </div>
           </div>
         ))}
         {loading && <div style={{ display:"flex", justifyContent:"flex-start" }}><div style={{ padding:"10px 14px", borderRadius:"12px 12px 12px 2px", background:T.surfaceAlt, border:`1px solid ${T.border}`, display:"flex", gap:5, alignItems:"center" }}>{[0,1,2].map(i=><div key={i} style={{ width:6, height:6, borderRadius:"50%", background:T.inkTer, animation:`pulse 1.2s ${i*0.2}s ease infinite` }}/>)}</div></div>}
         <div ref={messagesEndRef}/>
       </div>
-      {messages.length===1 && (
-        <div style={{ padding:"0 1rem 0.75rem", display:"flex", flexWrap:"wrap", gap:6, flexShrink:0 }}>
-          {CHAT_SUGGESTIONS.map((s,i) => <button key={i} onClick={()=>sendMessage(s)} style={{ fontSize:11, padding:"4px 10px", borderRadius:20, border:`1px solid ${T.border}`, background:T.surfaceAlt, color:T.inkSec, cursor:"pointer", fontFamily:"'Lato',sans-serif", fontWeight:700 }}>{s}</button>)}
-        </div>
-      )}
+      <div style={{ padding:"0 1rem 0.75rem", display:"flex", flexWrap:"wrap", gap:6, flexShrink:0 }}>
+        {CHAT_SUGGESTIONS.map((s,i) => <button key={i} onClick={()=>sendMessage(s)} disabled={loading} style={{ fontSize:11, padding:"4px 10px", borderRadius:20, border:`1px solid ${T.border}`, background:T.surfaceAlt, color:T.inkSec, cursor:loading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", fontWeight:700 }}>{s}</button>)}
+      </div>
       <div style={{ padding:"0.75rem 1rem", borderTop:`1px solid ${T.border}`, display:"flex", gap:8, flexShrink:0, background:T.surface }}>
         <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}} placeholder="Ask about your pantry, meals, or grocery list…" rows={2} style={{ flex:1, background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 12px", fontSize:13, color:T.ink, fontFamily:"'Lato',sans-serif", outline:"none", resize:"none", lineHeight:1.5 }}/>
         <button onClick={()=>sendMessage()} disabled={loading||!input.trim()} style={{ width:40, height:40, alignSelf:"flex-end", borderRadius:6, background:loading||!input.trim()?T.borderDark:T.green, border:"none", color:"#FFF", fontSize:16, cursor:loading||!input.trim()?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"background 0.15s", flexShrink:0 }}>↑</button>
@@ -344,8 +464,13 @@ function PantryPage({ getToken }) {
         headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
         body: JSON.stringify({ items }),
       });
-      if (!res.ok) throw new Error("Save failed");
-      setMsg({ type:"success", text:`✓ Pantry saved — ${items.length} items` });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Save failed");
+      }
+      const savedItems = json?.result?.items;
+      if (Array.isArray(savedItems)) setItems(savedItems);
+      setMsg({ type:"success", text:`✓ Pantry saved — ${(savedItems || items).length} items` });
     } catch (e) {
       setMsg({ type:"error", text:`⚠ ${e.message}` });
     } finally { setSaving(false); }
@@ -783,18 +908,13 @@ function ReceiptPage({ getToken }) {
         }),
       });
 
-      const json = await res.json();
-      if (json.success) {
-        setResult(json);
-        // Auto-fill store name if Gemini extracted it
-        if (json.store_name && !storeName) setStoreName(json.store_name);
-      } else if (json.error === "Could not determine store location. Please enter city and state.") {
-        // Gemini got items but no location — show partial result and ask for location
-        setError("Receipt parsed but location is missing. Please enter City and State below and upload again.");
-        if (json.store_name && !storeName) setStoreName(json.store_name);
-      } else {
-        setError(json.error || "Upload failed");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Upload failed");
       }
+      setResult(json);
+      // Auto-fill store name if extracted from the receipt
+      if (json.store_name && !storeName) setStoreName(json.store_name);
     } catch (e) {
       setError(e.message || "Upload failed");
     } finally {
@@ -928,7 +1048,7 @@ function ReceiptPage({ getToken }) {
           </div>
 
           <div style={{ padding: "10px 14px", borderRadius: 6, background: T.greenLight, fontSize: 12, color: T.green, fontWeight: 600 }}>
-            ✓ Real prices saved! When you generate a meal plan in {result.city}, these prices will be used instead of estimates.
+            ✓ Real prices saved to {result.city_key || result.city}. When you generate a meal plan in this city, these prices will be used instead of estimates.
           </div>
         </Card>
       )}
@@ -971,6 +1091,13 @@ export default function SmartCartAI() {
   const [regenLoading, setRegenLoading] = useState(false);
   const [regenMsg,     setRegenMsg]     = useState(null);
   const [chatOpen,     setChatOpen]     = useState(false);
+  const [cartOpt,      setCartOpt]      = useState(null);
+  const [cartOptLoading, setCartOptLoading] = useState(false);
+  const [cartOptError, setCartOptError] = useState(null);
+  const [weekPlan,     setWeekPlan]     = useState(null);
+  const [weekPlanLoading, setWeekPlanLoading] = useState(false);
+  const [weekPlanError, setWeekPlanError] = useState(null);
+  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const [userLatLng,   setUserLatLng]   = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
@@ -1008,13 +1135,17 @@ export default function SmartCartAI() {
   }, [user, authLoading, getToken]);
 
   const syncPantry = async (items) => {
-    if (!items?.length || !user) return;
+    if (!user) return;
     const token = await getToken();
-    fetch(`${BASE_URL}/pantry`, {
+    const res = await fetch(`${BASE_URL}/pantry`, {
       method:"PUT",
       headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-      body: JSON.stringify({ items }),
-    }).catch(()=>{});
+      body: JSON.stringify({ items: Array.isArray(items) ? items : [] }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.detail || json?.error || "Pantry sync failed");
+    }
   };
 
   const handleRegenerate = async () => {
@@ -1057,7 +1188,7 @@ export default function SmartCartAI() {
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
   const handleGenerate = async () => {
-    setError(null); setData(null); setLoading(true);
+    setError(null); setData(null); setCartOpt(null); setCartOptError(null); setWeekPlan(null); setWeekPlanError(null); setWeekPlanSaveMsg(null); setLoading(true);
     const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
@@ -1087,11 +1218,91 @@ export default function SmartCartAI() {
       const json = await res.json();
       await new Promise(r=>setTimeout(r,100));
       setData(json); setActiveTab("list");
-      syncPantry(pantryItems);
+      syncPantry(pantryItems).catch(e => console.warn("Pantry sync failed", e));
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
     } catch(e) {
       setError(e.message||"Something went wrong.");
     } finally { setLoading(false); }
+  };
+
+  const handleOptimizeCart = async () => {
+    if (!data?.shopping_list?.length) return;
+    setCartOptLoading(true); setCartOptError(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/optimize-cart-agent`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({
+          shopping_list: data.shopping_list || [],
+          substitutions: data.substitutions || {},
+          budget: lastPayloadRef.current?.budget ?? 100,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Cart optimization failed");
+      }
+      setCartOpt(json);
+    } catch (e) {
+      setCartOptError(e.message || "Cart optimization failed");
+    } finally {
+      setCartOptLoading(false);
+    }
+  };
+
+  const handlePlanMyWeek = async () => {
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({
+          budget: lastPayloadRef.current?.budget ?? 100,
+          dietary_instruction: dietary,
+          meal_count: 5,
+          ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
+          ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Plan My Week failed");
+      }
+      setWeekPlan(json);
+    } catch (e) {
+      setWeekPlanError(e.message || "Plan My Week failed");
+    } finally {
+      setWeekPlanLoading(false);
+    }
+  };
+
+  const handleApproveWeekPlan = async () => {
+    if (!weekPlan?.combined_shopping_list?.length) return;
+    setWeekPlanSaveMsg(null); setWeekPlanError(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({
+          suggested_meals: weekPlan.suggested_meals || [],
+          weekly_meals: weekPlan.weekly_meals || Object.fromEntries((weekPlan.suggested_meals || []).map((meal, i) => [`meal_${i+1}`, meal.name || meal.meal || String(meal)])),
+          shopping_list: weekPlan.combined_shopping_list || [],
+          budget_summary: weekPlan.budget_summary || {},
+          nutrition_report: weekPlan.nutrition_report || {},
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.detail || json?.error || "Could not save weekly plan");
+      }
+      setManualText((weekPlan.combined_shopping_list || []).join(", "));
+      setWeekPlanSaveMsg("✓ Weekly plan approved and saved.");
+    } catch (e) {
+      setWeekPlanError(e.message || "Could not save weekly plan");
+    }
   };
 
   const submitManualLocation = () => {
@@ -1237,6 +1448,55 @@ export default function SmartCartAI() {
               {error && <div style={{ marginTop:"1rem", padding:"12px 16px", borderRadius:6, background:T.redLight, border:"1px solid #f5c6c3", color:T.red, fontSize:13 }}>⚠ {error}</div>}
             </Card>
 
+            <Card className="fu" style={{ marginBottom:"2rem", borderColor:weekPlanError?T.red+"55":T.blue+"33" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Plan My Week</div>
+                  <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>One agent action chains pantry, meals, shopping list, budget, and receipt-aware store prices.</div>
+                </div>
+                <button onClick={handlePlanMyWeek} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.blue, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
+                  {weekPlanLoading ? "Planning…" : "✨ Plan My Week"}
+                </button>
+              </div>
+              {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
+              {weekPlan && (
+                <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+                    {(weekPlan.suggested_meals||[]).map((meal,i)=>(
+                      <div key={`${meal.name}-${i}`} style={{ padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                        <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{meal.name}</div>
+                        <div style={{ fontSize:11, color:T.inkSec, marginTop:3 }}>{meal.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                    {[
+                      { label:"Original", value:formatPrice(Number(weekPlan.original_total||0)), color:T.red },
+                      { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total||0)), color:T.green },
+                      { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
+                    ].map(m => (
+                      <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
+                        <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <AgentTrace steps={weekPlan.steps||[]} />
+                  {!!weekPlan.combined_shopping_list?.length && (
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
+                    </div>
+                  )}
+                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
+                    <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
+                  </div>
+                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:T.greenLight, color:T.green, border:`1px solid ${T.green}33` }}>{weekPlanSaveMsg}</div>}
+                </div>
+              )}
+            </Card>
+
             {loading && (
               <Card style={{ textAlign:"center", padding:"3rem" }}>
                 <div style={{ width:40, height:40, margin:"0 auto 1rem", border:`3px solid ${T.border}`, borderTop:`3px solid ${T.green}`, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
@@ -1249,6 +1509,58 @@ export default function SmartCartAI() {
                 <div style={{ display:"flex", gap:4, marginBottom:"1.25rem", overflowX:"auto", paddingBottom:2 }}>
                   {TABS.map(t=><TabBtn key={t.id} active={activeTab===t.id} onClick={()=>setActiveTab(t.id)}>{t.label}</TabBtn>)}
                 </div>
+
+
+                <Card className="fu1" style={{ marginBottom:"1.25rem", borderColor:cartOptError?T.red+"55":T.green+"33" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+                    <div>
+                      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Optimize My Cart</div>
+                      <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>Run pantry, budget, substitution, and store tools to explain possible savings.</div>
+                    </div>
+                    <button onClick={handleOptimizeCart} disabled={cartOptLoading || !list.length} style={{ padding:"11px 20px", background:cartOptLoading||!list.length?T.borderDark:T.green, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:cartOptLoading||!list.length?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:cartOptLoading?0.75:1 }}>
+                      {cartOptLoading ? "Optimizing…" : "✨ Optimize My Cart"}
+                    </button>
+                  </div>
+
+                  {cartOptError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {cartOptError}</div>}
+
+                  {cartOpt && (
+                    <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                        {[
+                          { label:"Original", value:formatPrice(Number(cartOpt.original_total||0)), color:T.red },
+                          { label:"Optimized", value:formatPrice(Number(cartOpt.optimized_total||0)), color:T.green },
+                          { label:"Savings", value:formatPrice(Number(cartOpt.estimated_savings||0)), color:T.blue },
+                        ].map(m => (
+                          <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
+                            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
+                            <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ padding:"12px 14px", background:T.surfaceAlt, borderRadius:6, border:`1px solid ${T.border}`, fontSize:13, color:T.inkSec, lineHeight:1.65, whiteSpace:"pre-wrap" }}>{cartOpt.summary}</div>
+                      <AgentTrace steps={cartOpt.steps||[]} />
+                      {!!cartOpt.pantry_removed?.length && (
+                        <div style={{ fontSize:12, color:T.green }}>Pantry items skipped: {cartOpt.pantry_removed.join(", ")}</div>
+                      )}
+                      {!!cartOpt.substitutions_applied?.length && (
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                          {cartOpt.substitutions_applied.map((s,i)=><span key={i} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{s.original} → {s.replacement}</span>)}
+                        </div>
+                      )}
+                      {!!cartOpt.store_plan?.length && (
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+                          {cartOpt.store_plan.slice(0,8).map((entry,i)=>(
+                            <div key={`${entry.item}-${i}`} style={{ padding:"9px 10px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                              <div style={{ fontSize:12, fontWeight:800, color:T.ink, textTransform:"capitalize" }}>{entry.item}</div>
+                              <div style={{ fontSize:11, color:T.inkSec, marginTop:2 }}>{entry.store} · {formatPrice(Number(entry.price||0), entry.currency||"USD")}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
 
                 {activeTab==="list" && (
                   <Card className="fu1">
@@ -1325,7 +1637,7 @@ export default function SmartCartAI() {
                                   return (
                                     <tr key={item} style={{ background:ri%2===0?T.surfaceAlt:T.surface }}>
                                       <td style={{ padding:"8px 12px", textTransform:"capitalize", fontWeight:500 }}>{item}</td>
-                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?formatPrice(p,curr):<span title="Not available">N/A</span>}</td>; })}
+                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; const source=pm.sources[s.store_name]?.[item]; const sourceStore=pm.priceStores[s.store_name]?.[item]; const note=pm.notes[s.store_name]?.[item]; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?<><div>{formatPrice(p,curr)}</div><div title={note} style={{ fontFamily:"'Lato',sans-serif", fontSize:10, fontWeight:700, color:source==="receipt"?T.green:T.inkSec, marginTop:2 }}>{source==="receipt"?"🧾 Receipt":"Estimate"}{source==="receipt"&&sourceStore&&sourceStore!==s.store_name?` · ${sourceStore}`:""}</div></>:<span title="Not available">N/A</span>}</td>; })}
                                     </tr>
                                   );
                                 })}
@@ -1335,7 +1647,7 @@ export default function SmartCartAI() {
                                 </tr>
                               </tbody>
                             </table>
-                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store.</p>
+                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store. 🧾 Receipt = verified uploaded receipt price; Estimate = generated price estimate.</p>
                           </div>
                         </Card>
                       </>
