@@ -170,11 +170,14 @@ function buildMatrix(stores) {
   const allItems = new Set();
   stores.forEach(s => (s.items||[]).forEach(i => allItems.add(i.item)));
   const items = [...allItems].sort();
-  const matrix = {}, totals = {}, currencies = {};
+  const matrix = {}, totals = {}, currencies = {}, sources = {}, notes = {}, priceStores = {};
   stores.forEach(s => {
-    const n = s.store_name; totals[n]=0; matrix[n]={};
+    const n = s.store_name; totals[n]=0; matrix[n]={}; sources[n]={}; notes[n]={}; priceStores[n]={};
     (s.items||[]).forEach(i => {
       matrix[n][i.item]=i.price;
+      sources[n][i.item]=i.source || "estimate";
+      notes[n][i.item]=i.note || (i.source === "receipt" ? "Verified price from a recent receipt" : "Estimated price");
+      priceStores[n][i.item]=i.price_store || n;
       totals[n]+=i.price;
       if (!currencies[n]) currencies[n] = i.currency || "USD";
     });
@@ -185,7 +188,7 @@ function buildMatrix(stores) {
     stores.forEach(s => { const p=matrix[s.store_name]?.[item]; if(p!==undefined&&p<minP){minP=p;minS=s.store_name;} });
     if(minS){ wCounts[minS]=(wCounts[minS]||0)+1; wTotals[minS]=(wTotals[minS]||0)+minP; }
   });
-  return { items, matrix, totals, currencies, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
+  return { items, matrix, totals, currencies, sources, notes, priceStores, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
 }
 
 const CURRENCY_SYMBOLS = { USD:"$", INR:"₹", GBP:"£", CAD:"CA$", AUD:"A$", SGD:"S$", AED:"AED " };
@@ -1387,6 +1390,55 @@ export default function SmartCartAI() {
               {error && <div style={{ marginTop:"1rem", padding:"12px 16px", borderRadius:6, background:T.redLight, border:"1px solid #f5c6c3", color:T.red, fontSize:13 }}>⚠ {error}</div>}
             </Card>
 
+            <Card className="fu" style={{ marginBottom:"2rem", borderColor:weekPlanError?T.red+"55":T.blue+"33" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Plan My Week</div>
+                  <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>One agent action chains pantry, meals, shopping list, budget, and receipt-aware store prices.</div>
+                </div>
+                <button onClick={handlePlanMyWeek} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.blue, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
+                  {weekPlanLoading ? "Planning…" : "✨ Plan My Week"}
+                </button>
+              </div>
+              {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
+              {weekPlan && (
+                <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+                    {(weekPlan.suggested_meals||[]).map((meal,i)=>(
+                      <div key={`${meal.name}-${i}`} style={{ padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                        <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{meal.name}</div>
+                        <div style={{ fontSize:11, color:T.inkSec, marginTop:3 }}>{meal.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                    {[
+                      { label:"Original", value:formatPrice(Number(weekPlan.original_total||0)), color:T.red },
+                      { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total||0)), color:T.green },
+                      { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
+                    ].map(m => (
+                      <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
+                        <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <AgentTrace steps={weekPlan.steps||[]} />
+                  {!!weekPlan.combined_shopping_list?.length && (
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
+                    </div>
+                  )}
+                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
+                    <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
+                  </div>
+                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
+                </div>
+              )}
+            </Card>
+
             {loading && (
               <Card style={{ textAlign:"center", padding:"3rem" }}>
                 <div style={{ width:40, height:40, margin:"0 auto 1rem", border:`3px solid ${T.border}`, borderTop:`3px solid ${T.green}`, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
@@ -1527,7 +1579,7 @@ export default function SmartCartAI() {
                                   return (
                                     <tr key={item} style={{ background:ri%2===0?T.surfaceAlt:T.surface }}>
                                       <td style={{ padding:"8px 12px", textTransform:"capitalize", fontWeight:500 }}>{item}</td>
-                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?formatPrice(p,curr):<span title="Not available">N/A</span>}</td>; })}
+                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; const source=pm.sources[s.store_name]?.[item]; const sourceStore=pm.priceStores[s.store_name]?.[item]; const note=pm.notes[s.store_name]?.[item]; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?<><div>{formatPrice(p,curr)}</div><div title={note} style={{ fontFamily:"'Lato',sans-serif", fontSize:10, fontWeight:700, color:source==="receipt"?T.green:T.inkSec, marginTop:2 }}>{source==="receipt"?"🧾 Receipt":"Estimate"}{source==="receipt"&&sourceStore&&sourceStore!==s.store_name?` · ${sourceStore}`:""}</div></>:<span title="Not available">N/A</span>}</td>; })}
                                     </tr>
                                   );
                                 })}
@@ -1537,7 +1589,7 @@ export default function SmartCartAI() {
                                 </tr>
                               </tbody>
                             </table>
-                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store.</p>
+                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store. 🧾 Receipt = verified uploaded receipt price; Estimate = generated price estimate.</p>
                           </div>
                         </Card>
                       </>

@@ -147,6 +147,9 @@ class DishRequest(BaseModel):
     selected_substitutions: Dict[str, str] = {}
     user_lat: float | None = None
     user_lng: float | None = None
+    manual_city: str | None = None
+    manual_state: str | None = None
+    manual_postal_code: str | None = None
     force_refresh: bool = False
 
 class ChatRequest(BaseModel):
@@ -243,6 +246,9 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
             selected_substitutions=request.selected_substitutions,
             user_lat=request.user_lat,
             user_lng=request.user_lng,
+            manual_city=request.manual_city,
+            manual_state=request.manual_state,
+            manual_postal_code=request.manual_postal_code,
             force_refresh=request.force_refresh,
             gemini_allowed=gemini_check["allowed"],
         )

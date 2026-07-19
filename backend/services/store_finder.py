@@ -191,24 +191,9 @@ def find_nearby_grocery_stores(lat, lng, radius=15000):
 # INVENTORY + ITEMIZED PRICES (🔥 FIX)
 # =====================================================
 
-def mock_check_inventory(store_name, shopping_list, city="", state="", country=""):
-    """
-    Checks real prices from Firestore first (uploaded receipts).
-    Falls back to mock prices if no real data exists.
+def _estimate_price(item, store_name, currency):
+    from backend.optimization.budget_optimizer import get_real_price as get_estimated_price
 
-    Every returned item includes a "currency" field, derived from `country`.
-    Mock prices are also scaled per currency so the numbers are the right
-    order of magnitude (a mock USD price of $2.50 should not become a mock
-    INR price of ₹2.50 — it should become something like ₹190).
-    """
-    from backend.db.store_prices_repository import get_real_price, get_currency_for_country
-
-    currency = get_currency_for_country(country)
-
-    # Rough scale factor to keep MOCK prices in a plausible range per
-    # currency. These are not live FX rates — just enough so a fake grocery
-    # price looks locally sane (e.g. INR items are commonly in the tens/
-    # hundreds, not single digits).
     MOCK_SCALE_FACTOR = {
         "USD": 1.0,
         "INR": 80.0,
@@ -219,14 +204,27 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
         "AED": 3.67,
     }
     scale = MOCK_SCALE_FACTOR.get(currency, 1.0)
+    try:
+        return round(float(get_estimated_price(item, store_name)) * scale, 2)
+    except Exception as e:
+        print(f"[store] internet estimate failed for item={item} store={store_name}: {e}")
+        base_price = ((hash(item + store_name) % 500) / 100) + 1
+        return round(base_price * scale, 2)
 
+
+def mock_check_inventory(store_name, shopping_list, city="", state="", country=""):
+    """
+    Builds itemized recommendations using the lower of receipt-derived city prices
+    and the existing internet/AI estimate mechanism.
+    """
+    from backend.db.store_prices_repository import get_currency_for_country, get_lowest_receipt_price_for_item
+
+    currency = get_currency_for_country(country)
     inventory = {}
-    lower = store_name.lower()
 
     for item in shopping_list:
-        # Try real price first
-        real_price = None
-        if city and state:
+        receipt_price = None
+        if city:
             try:
                 real_price = get_real_price(item, store_name, city, state, country)
             except Exception:
@@ -260,14 +258,41 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
 
         price = round(base_price * multiplier * scale, 2) if available else None
         inventory[item] = {
-            "available": available,
+            "available": True,
             "price": price,
-            "currency": currency,
-            "note": None if available else "Not available at this store",
-            "source": "mock",
+            "currency": item_currency,
+            "note": note,
+            "source": source,
+            "price_store": price_store,
         }
 
     return inventory
+
+def _receipt_stores_for_city(city="", state="", country=""):
+    if not city or not state:
+        return []
+    try:
+        from backend.db.store_prices_repository import get_stores_in_city
+
+        receipt_stores = get_stores_in_city(city, state, country or "US")
+    except Exception as e:
+        print(f"[store] receipt city-store lookup failed for {city}, {state}: {e}")
+        return []
+
+    stores = []
+    for store in receipt_stores:
+        if not isinstance(store, dict) or not store.get("store_name"):
+            continue
+        stores.append({
+            "name": store.get("store_name"),
+            "lat": store.get("lat"),
+            "lng": store.get("lng"),
+            "address": store.get("address", ""),
+            "rating": store.get("rating", 4.0),
+            "source": "receipt",
+        })
+    print(f"[store] receipt city-store fallback found {len(stores)} stores for {city}, {state}")
+    return stores
 
 
 # =====================================================
@@ -282,15 +307,9 @@ def score_store(store, inventory, user_location):
         lng2 = store.get("lng")
 
         if None in (lat1, lng1, lat2, lng2):
-            return {
-                "distance_km": 999,
-                "availability_score": 0,
-                "average_price": 0,
-                "total_price": 0,
-                "final_score": 0
-            }
-
-        distance = haversine_distance(lat1, lng1, lat2, lng2)
+            distance = 999
+        else:
+            distance = haversine_distance(lat1, lng1, lat2, lng2)
 
     except Exception as e:
         print("[store] distance calculation failed:", e)
@@ -346,21 +365,27 @@ def recommend_best_store(user_location, shopping_list):
         print("[store] missing user coordinates:", user_location)
         return []
 
+    city = user_location.get("city", "")
+    state = user_location.get("region", "")
+    country = user_location.get("country", "")
+
+    print(f"[store] city resolved for price recommendations: city={city!r} state={state!r} country={country!r}")
     try:
         stores = find_nearby_grocery_stores(lat, lng)
     except Exception as e:
         print("[store] failed to fetch stores:", e)
-        return []
+        stores = []
+    print(f"[store] nearby store results: {len(stores)}")
 
     if not stores:
-        print("[store] no stores returned from finder")
+        print("[store] no stores returned from finder; trying receipt city stores")
+        stores = _receipt_stores_for_city(city, state, country)
+
+    if not stores:
+        print("[store] no stores available after receipt fallback")
         return []
 
     results = []
-
-    city = user_location.get("city", "")
-    state = user_location.get("region", "")
-    country = user_location.get("country", "")
 
     for store in stores:
         try:
@@ -408,11 +433,17 @@ def recommend_best_store(user_location, shopping_list):
                     items.append({
                         "item": item,
                         "price": data["price"],
-                        "currency": data.get("currency", "USD")
+                        "currency": data.get("currency", "USD"),
+                        "source": data.get("source", "estimate"),
+                        "note": data.get("note"),
+                        "price_store": data.get("price_store", store_name),
                     })
                     price_breakdown[item] = {
                         "price": data["price"],
-                        "currency": data.get("currency", "USD")
+                        "currency": data.get("currency", "USD"),
+                        "source": data.get("source", "estimate"),
+                        "note": data.get("note"),
+                        "price_store": data.get("price_store", store_name),
                     }
 
             results.append({
