@@ -24,6 +24,8 @@ from backend.agent.chat_tool_router import (
     route_chat_tools,
 )
 from backend.agent.cart_optimization_agent import build_cart_optimization_plan
+from backend.agent.week_plan_agent import build_week_plan
+from backend.db.meal_plan_repository import save_meal_plan
 from backend.core.pipeline import run_grocery_pipeline
 from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
@@ -124,11 +126,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://buildweek-smartcart.web.app",
+    allow_origins=["https://buildweek-smartcart.web.app",
         "https://qwen-smartcart.web.app",
         "https://smartcart-ai-dev.web.app",
-        "http://localhost:3000",],
+        "http://localhost:3000",
+        ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -160,6 +162,22 @@ class CartOptimizationRequest(BaseModel):
     shopping_list: List[str]
     substitutions: Dict[str, object] = {}
     budget: float = 100
+
+class PlanMyWeekRequest(BaseModel):
+    budget: float = 100
+    dietary_instruction: str = "Vegetarian only"
+    meal_count: int = 5
+    user_lat: float | None = None
+    user_lng: float | None = None
+    manual_city: str | None = None
+    manual_state: str | None = None
+    manual_postal_code: str | None = None
+
+class PlanMyWeekApproveRequest(BaseModel):
+    weekly_meals: Dict[str, str]
+    shopping_list: List[str]
+    budget_summary: Dict[str, object] = {}
+    nutrition_report: Dict[str, object] = {}
 
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
@@ -274,6 +292,64 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/plan-my-week")
+def plan_my_week(request: PlanMyWeekRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[plan-my-week] request received for user={uid}")
+    try:
+        if request.meal_count < 1 or request.meal_count > 7:
+            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 7")
+
+        gemini_check = check_gemini_limit(uid)
+        result = build_week_plan(
+            user_id=uid,
+            budget=request.budget,
+            dietary_instruction=request.dietary_instruction,
+            user_lat=request.user_lat,
+            user_lng=request.user_lng,
+            manual_city=request.manual_city,
+            manual_state=request.manual_state,
+            manual_postal_code=request.manual_postal_code,
+            meal_count=request.meal_count,
+            gemini_allowed=gemini_check["allowed"],
+        )
+        if result.get("_gemini_called"):
+            increment_usage(uid, "gemini")
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        print(f"[plan-my-week] bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[plan-my-week] failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/plan-my-week/approve")
+def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[plan-my-week] approve received for user={uid}")
+    try:
+        if not request.shopping_list:
+            raise HTTPException(status_code=400, detail="shopping_list is required")
+        saved = save_meal_plan(
+            user_id=uid,
+            weekly_meals=request.weekly_meals,
+            shopping_list=request.shopping_list,
+            budget_summary=request.budget_summary,
+            nutrition_report=request.nutrition_report,
+        )
+        return {"success": True, "saved": saved}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[plan-my-week] approve failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/optimize-cart-agent")
 async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
@@ -329,6 +405,7 @@ If no backend tools matched this message, answer normally without claiming you c
     # so generate_primary_or_fallback() always routes to Gemini via fast-fail.
     def generate_with_gemini(chat_prompt: str) -> str:
         from vertexai.generative_models import GenerativeModel
+
         model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
         return model.generate_content(chat_prompt).text
 
