@@ -196,6 +196,23 @@ function formatPrice(amount, currency="USD") {
   return `${CURRENCY_SYMBOLS[currency] || ""}${amount.toFixed(2)}`;
 }
 
+function apiErrorMessage(json={}, fallback="Request failed") {
+  const detail = json?.detail;
+  if (Array.isArray(detail)) {
+    const message = detail.map(item => {
+      if (!item || typeof item !== "object") return String(item);
+      const loc = Array.isArray(item.loc) ? item.loc.join(".") : item.loc;
+      return `${loc ? `${loc}: ` : ""}${item.msg || JSON.stringify(item)}`;
+    }).join("; ");
+    if (message) return message;
+  }
+  if (typeof detail === "string" && detail) return detail;
+  const error = json?.error;
+  if (typeof error === "string" && error) return error;
+  if (error && typeof error === "object") return JSON.stringify(error);
+  return fallback;
+}
+
 // ── Chat Panel ───────────────────────────────────────────────────────────────
 function toolLabel(name="") {
   const labels = {
@@ -572,7 +589,7 @@ function FeedbackPage({ getToken }) {
         body: JSON.stringify({ email, comment }),
       });
       const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error || "Failed to send feedback");
+      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Failed to send feedback"));
       setMsg({ type:"success", text:"✓ Thank you! Your feedback has been sent." });
       setComment("");
     } catch (e) {

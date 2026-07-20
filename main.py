@@ -1,17 +1,9 @@
-from dotenv import load_dotenv
-load_dotenv()
+"""Compatibility entry point for deployments that import main:app.
 
-import os
-import json
-import httpx
-import time
-import traceback
-from contextlib import asynccontextmanager
-from typing import List, Dict
+The canonical FastAPI application lives in backend.api.main.
+"""
 
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from backend.api.main import app
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
