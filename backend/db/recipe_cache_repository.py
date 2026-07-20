@@ -15,6 +15,15 @@ def _sanitize_doc_id(raw: str) -> str:
     return safe or "unknown"
 
 
+def _normalize_cache_component(value: str) -> str:
+    """Normalize every cache-key component consistently across read/write paths."""
+    return " ".join((value or "").strip().lower().split())
+
+
+def build_recipe_cache_key(meal: str, dietary: str) -> str:
+    return f"{_normalize_cache_component(meal)}|{_normalize_cache_component(dietary)}"
+
+
 def _cache_collection(user_id: str):
     return db.collection("users").document(user_id).collection("recipe_cache")
 
@@ -74,19 +83,27 @@ def save_recipe_cache(
     substitutions: dict = None,
     instructions: list = None,
 ):
-    meal = " ".join(meal.strip().lower().split())
+    meal = _normalize_cache_component(meal)
     if nutrition is None:
         nutrition = {}
     if substitutions is None:
         substitutions = {}
 
-    clean_ingredients, clean_instructions = _enforce_limits(ingredients, instructions)
-
     doc_id = _sanitize_doc_id(meal)
     print(f"save recipe cache: {meal} (user={user_id})")
 
     try:
-        _cache_collection(user_id).document(doc_id).set({
+        document = _cache_collection(user_id).document(doc_id)
+        # A substitution update can be the first write for a recipe; Firestore
+        # returns None from to_dict() when that document does not exist yet.
+        existing = (document.get().to_dict() or {}) if instructions is None else {}
+        preserved_instructions = existing.get("instructions", []) if existing else []
+        clean_ingredients, clean_instructions = _enforce_limits(
+            ingredients,
+            preserved_instructions if instructions is None else instructions,
+        )
+
+        document.set({
             "meal":             meal,
             "ingredients":      clean_ingredients,
             "instructions":     clean_instructions,
@@ -96,9 +113,11 @@ def save_recipe_cache(
             "updated_at":       datetime.utcnow(),
         })
         print(f"saved recipe cache: {meal} — {len(clean_ingredients)} ingredients, {len(clean_instructions)} instructions")
+        return {"success": True, "cache_key": meal}
 
     except Exception as e:
         print(f"ERROR saving recipe cache for {meal}: {e}")
+        return {"success": False, "cache_key": meal, "error": str(e)}
 
 
 # =====================================================
@@ -114,7 +133,7 @@ def user_save_recipe(
     Called when a user manually saves/edits a recipe from the UI.
     Merges with existing doc to preserve nutrition_report and substitutions.
     """
-    meal = " ".join(meal.strip().lower().split())
+    meal = _normalize_cache_component(meal)
     clean_ingredients, clean_instructions = _enforce_limits(ingredients, instructions)
     doc_id = _sanitize_doc_id(meal)
 
