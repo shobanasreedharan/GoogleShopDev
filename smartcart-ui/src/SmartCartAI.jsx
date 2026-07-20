@@ -1289,6 +1289,7 @@ export default function SmartCartAI() {
 
   const handleApproveWeekPlan = async () => {
     if (!weekPlan) return;
+    console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
     setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
@@ -1301,7 +1302,7 @@ export default function SmartCartAI() {
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Approve failed");
+      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
       setWeekPlanSaveMsg("Plan saved to your profile.");
     } catch (e) {
       setWeekPlanError(e.message);
