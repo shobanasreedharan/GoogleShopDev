@@ -126,7 +126,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://buildweek-smartcart.web.app",
+        "https://qwen-smartcart.web.app",
+        "https://smartcart-ai-dev.web.app",
+        "http://localhost:3000",
+        ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,12 +174,8 @@ class PlanMyWeekRequest(BaseModel):
     manual_postal_code: str | None = None
 
 class PlanMyWeekApproveRequest(BaseModel):
-    # Accept both the API-native save shape and the Plan My Week response shape
-    # used by the frontend approval card.
-    weekly_meals: Dict[str, str] = {}
-    shopping_list: List[str] = []
-    suggested_meals: List[object] = []
-    combined_shopping_list: List[str] = []
+    weekly_meals: Dict[str, str]
+    shopping_list: List[str]
     budget_summary: Dict[str, object] = {}
     nutrition_report: Dict[str, object] = {}
 
@@ -332,24 +332,12 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
     uid = user["uid"]
     print(f"[plan-my-week] approve received for user={uid}")
     try:
-        shopping_list = request.shopping_list or request.combined_shopping_list
-        weekly_meals = request.weekly_meals or {
-            f"meal_{index + 1}": (
-                meal.get("name") or meal.get("meal") if isinstance(meal, dict) else str(meal)
-            )
-            for index, meal in enumerate(request.suggested_meals or [])
-        }
-        weekly_meals = {key: value for key, value in weekly_meals.items() if value}
-
-        if not shopping_list:
-            raise HTTPException(status_code=400, detail="shopping_list or combined_shopping_list is required")
-        if not weekly_meals:
-            raise HTTPException(status_code=400, detail="weekly_meals or suggested_meals is required")
-
+        if not request.shopping_list:
+            raise HTTPException(status_code=400, detail="shopping_list is required")
         saved = save_meal_plan(
             user_id=uid,
-            weekly_meals=weekly_meals,
-            shopping_list=shopping_list,
+            weekly_meals=request.weekly_meals,
+            shopping_list=request.shopping_list,
             budget_summary=request.budget_summary,
             nutrition_report=request.nutrition_report,
         )
@@ -413,7 +401,8 @@ User question: {req.message}
 Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
 If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    # GPT-5.6 is primary here; retain Gemini as the resilience fallback.
+    # Gemini is primary for this build — OPENAI_API_KEY is intentionally unset
+    # so generate_primary_or_fallback() always routes to Gemini via fast-fail.
     def generate_with_gemini(chat_prompt: str) -> str:
         from vertexai.generative_models import GenerativeModel
 

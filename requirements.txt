@@ -11,3 +11,4 @@ mcp
 google-adk
 httpx
 openai
+firebase-admin
