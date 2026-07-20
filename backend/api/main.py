@@ -174,8 +174,10 @@ class PlanMyWeekRequest(BaseModel):
     manual_postal_code: str | None = None
 
 class PlanMyWeekApproveRequest(BaseModel):
-    weekly_meals: Dict[str, str]
-    shopping_list: List[str]
+    suggested_meals: Dict[str, str] | None = None
+    combined_shopping_list: List[str] | None = None
+    weekly_meals: Dict[str, str] | None = None
+    shopping_list: List[str] | None = None
     budget_summary: Dict[str, object] = {}
     nutrition_report: Dict[str, object] = {}
 
@@ -332,12 +334,18 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
     uid = user["uid"]
     print(f"[plan-my-week] approve received for user={uid}")
     try:
-        if not request.shopping_list:
-            raise HTTPException(status_code=400, detail="shopping_list is required")
+        weekly_meals = request.weekly_meals or request.suggested_meals
+        shopping_list = request.shopping_list or request.combined_shopping_list
+
+        if not weekly_meals:
+            raise HTTPException(status_code=400, detail="weekly_meals or suggested_meals is required")
+        if not shopping_list:
+            raise HTTPException(status_code=400, detail="shopping_list or combined_shopping_list is required")
+
         saved = save_meal_plan(
             user_id=uid,
-            weekly_meals=request.weekly_meals,
-            shopping_list=request.shopping_list,
+            weekly_meals=weekly_meals,
+            shopping_list=shopping_list,
             budget_summary=request.budget_summary,
             nutrition_report=request.nutrition_report,
         )
