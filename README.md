@@ -1,197 +1,67 @@
-# SmartCart AI 🛒
-### AI-Powered Grocery Intelligence
+# SmartCart AI - A Kitchen Operating System
 
-> Built for the Google Cloud Rapid Agent Hackathon 2026
+**AI-powered kitchen operating system that turns your pantry into a week of meals, a smart budget, and the cheapest store run nearby.**
 
-SmartCart AI is an intelligent grocery planning agent that transforms your meal ideas into optimized shopping plans — complete with store recommendations, route optimization, nutritional analysis, and smart substitutions.
+Built for OpenAI Build Week. Originally created as SmartCart AI for the Google Cloud Rapid Agent Hackathon, and rebuilt for the Alibaba/Qwen Cloud Hackathon — this submission is the third iteration of the same codebase, now rearchitected as a genuinely autonomous AI agent.
 
----
-
-## Live Demo
-
- [https://hackathon-grocery-ai-498023.web.app](https://hackathon-grocery-ai-498023.web.app)
+🔗 **Live app:** https://buildweek-smartcart.web.app
 
 ---
 
-## Problem Statement
+## What it does
 
-Planning meals and grocery shopping can be time-consuming and expensive.
-Users often struggle with:
+SmartCart AI offers two agent modes:
 
-- Creating ingredient lists from scratch
-- Maintaining balanced nutrition across the week
-- Staying within a grocery budget
-- Finding ingredient substitutions for dietary needs or unavailable items
-- Choosing the best stores for price and convenience
+- **Plan My Week** — fully autonomous. No preferences required. The agent chains five tools in a single run: checks your pantry, generates a week of meals, builds a shopping list, optimizes your budget, and compares real nearby grocery stores to find the cheapest one — all without mid-flow user input.
+- **Optimize My Cart** — generated when the user provides meal preferences. Runs the same pantry/budget/substitution/store-comparison tools, shaped around what the user actually wants to eat.
 
-**SmartCart AI automates the entire workflow** — from meal idea to optimized shopping plan in seconds.
+Every tool call the agent makes is visible via **AgentTrace**, so the reasoning is never a black box. Clicking "Plan meal from my pantry" in chat shows the exact agent tool being invoked in real time.
 
 ---
 
-## Features
+## How GPT-5.6 and Codex were used
 
-- **Meal to Shopping List** — Enter any meal or weekly plan; the AI generates a complete ingredient list
-- **Smart Substitutions** — Choose ingredient alternatives based on dietary preference or availability
-- **Nearby Store Finder** — Locates the best stores near you with availability scores
-- **Route Optimization** — Plans the most efficient shopping route across stores
-- **Nutrition Analysis** — Full macro breakdown with AI health feedback
-- **Budget Optimizer** — Estimates costs and finds savings across stores
-- **Personalized Cache** — Remembers your substitution preferences for future plans
-- **Dietary Modes** — Supports Vegetarian, Vegan, Gluten-Free, and more
+**GPT-5.6** is the primary AI model powering the agent pipeline — used for weekly meal generation, budget/substitution reasoning, and nutrition feedback via `generate_primary_or_fallback()` in `backend/core/gpt56_client.py`. If GPT-5.6 is unavailable, the app automatically fails over to Gemini so a single provider outage never breaks the experience.
 
----
+**OpenAI Codex** was used throughout final development and debugging as a coding agent, working alongside Claude for planning and verification. Codex was responsible for:
 
-## Smart Caching Strategy
+- Diagnosing and fixing a Pydantic validation mismatch in `/plan-my-week/approve`, where the API expected a flat `{name: description}` dict but the actual generated data was a list of `{name, reason}` meal objects — Codex traced the real shape, added proper Pydantic models (`SuggestedMeal`), and wrote defensive normalization logic to accept multiple payload shapes.
+- Rebuilding the store-recommendation pipeline (`backend/services/store_finder.py`) to filter nearby results down to actual grocery stores (excluding non-grocery places like gas stations and restaurants) and to price the real generated shopping list against each store, producing genuine per-store basket comparisons instead of placeholder data.
+- Fixing a frontend display bug where FastAPI's structured validation errors were rendered as raw `[object Object]` text instead of readable messages, by writing an `apiErrorMessage()` helper that correctly parses FastAPI's error array format.
+- Adding the "Compare Nearby Stores" UI section to the Plan My Week card, consuming the corrected store-comparison data and highlighting the cheapest option.
+- Fixing a save-confirmation display bug where a successful save silently rendered as an empty error-styled box due to a string/object type mismatch in component state.
 
-SmartCart AI uses MongoDB as an intelligent cache to minimize AI token costs:
-
-- On the **first request** for a recipe, Gemini generates the shopping list, substitutions, and nutrition report — all three are saved to MongoDB.
-- On **subsequent requests** for the same recipe, data is pulled directly from MongoDB — **no Gemini call is made**, saving token costs entirely.
-- When a user **saves substitution preferences**, the cache is updated with the personalized ingredient list so future plans reflect their choices automatically.
-- Cache keys are normalized (lowercase, collapsed spaces) so `"Creamy Tomato Soup"` and `"creamy tomato  soup"` always resolve to the same record.
-
-This means the more the app is used, the cheaper and faster it gets
+All Codex-authored changes were reviewed, tested end-to-end against the live deployed site, and verified by hand before being merged — several early Codex fixes were caught as incomplete or based on incorrect assumptions about data shape, and iterated on with more precise, evidence-based prompts (e.g. requiring Codex to print and inspect actual API response shapes rather than guess).
 
 ---
 
-##  Architecture
+## Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│              React Frontend                 │
-│         (Firebase Hosting)                  │
-└─────────────────┬───────────────────────────┘
-                  │ REST API
-┌─────────────────▼───────────────────────────┐
-│           FastAPI Backend                   │
-│         (Google Cloud Run)                  │
-│                                             │
-│  ┌──────────────────────────────────────┐   │
-│  │         10-Step AI Pipeline          │   │
-│  │  1. Unified AI Agent (Gemini 2.5)    │   │
-│  │  2. Shopping List Compiler           │   │
-│  │  3. Substitution Persistence         │   │
-│  │  4. Pantry Filter                    │   │
-│  │  5. Budget Optimizer                 │   │
-│  │  6. Location Resolver                │   │
-│  │  7. Store Finder (Google Maps)       │   │
-│  │  8. Route Optimizer                  │   │
-│  │  9. MongoDB Save                     │   │
-│  │  10. Response Formatter              │   │
-│  └──────────────────────────────────────┘   │
-└─────────────────┬───────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────┐
-│           MongoDB Atlas                     │
-│   recipe_cache | meal_plans | pantry        │
-└─────────────────────────────────────────────┘
-```
+- **Frontend:** React, deployed to Firebase Hosting (multi-target setup across three hackathon submissions from one codebase)
+- **Backend:** FastAPI on Google Cloud Run, containerized via Cloud Build and Artifact Registry
+- **AI layer:** GPT-5.6 (primary) with automatic Gemini fallback
+- **Data:** Firestore (user-scoped pantry, meal plans, receipts) + MongoDB-backed caching
+- **Auth:** Firebase Auth with Google Sign-In
+- **Store pricing:** Real store-finder pipeline using location + Places data, filtered to grocery stores, pricing the actual generated shopping list per store
 
 ---
 
-## Tech Stack
+## Running locally
 
-| Layer | Technology |
-|---|---|
-| Frontend | React, Firebase Hosting |
-| Backend | FastAPI, Python |
-| AI | GPT-5.6 (primary) with Gemini 2.5 Flash fallback via Vertex AI |
-| MCP | FastMCP (Model Context Protocol) |
-| Database | MongoDB Atlas |
-| Infrastructure | Google Cloud Run, Google Container Registry |
-| Maps | Google Maps API |
-
----
-
-## Local Development
-
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Google Cloud SDK
-- MongoDB Atlas account
-
-### Backend
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8080
-```
+# Backend
+py -m uvicorn backend.api.main:app --reload --port 8000
 
-### Frontend
-```bash
+# Frontend
 cd smartcart-ui
 npm install
 npm start
 ```
 
-### Environment Variables
-```env
-MDB_MCP_CONNECTION_STRING=mongodb+srv://...
-MONGO_DB=smart_grocery
-GOOGLE_CLOUD_PROJECT=your-project-id
-GEMINI_MODEL_NAME=gemini-2.5-flash
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_CLOUD_LOCATION=us-central1
-GOOGLE_MAPS_API_KEY=your-maps-api-key
-OPENAI_API_KEY=your-openai-api-key
-```
-
-> ⚠️ Never commit `.env` files or API keys to the repository.
-
-### GPT-5.6 primary model and Gemini fallback
-
-GPT-5.6 is the primary model for `/chat` final responses and single-meal recipe
-generation. If the GPT-5.6 request fails or returns no usable text, SmartCart
-automatically uses the existing Gemini path so these user-facing flows remain
-resilient. This is meaningful GPT-5.6 usage—not decorative—because it produces
-the final grounded chat answer and the complete single-meal recipe plan. Set
-`OPENAI_API_KEY` in your local `.env` (use `.env.example` as the safe template)
-before running those primary-model paths.
-
----
-
-## Project Structure
-
-```
-smartcart-ai/
-├── backend/
-│   ├── agent/          # Unified AI agent (Gemini)
-│   ├── core/           # MCP registry
-│   ├── db/             # MongoDB repositories
-│   ├── optimization/   # Budget + route optimizers
-│   ├── schemas/        # Pydantic models
-│   ├── services/       # Store finder, location
-│   ├── utils/          # Sanitizers, helpers
-│   └── validators/     # Nutrition validator
-├── smartcart-ui/       # React frontend
-│   └── src/
-│       └── SmartCartAI.jsx
-├── README.md
-└── LICENSE
-```
-
----
-
-## Hackathon
-
-Built for the **Google Cloud Rapid Agent Hackathon 2026** by Shobana Sreedharan.
-
 ---
 
 ## License
 
-© 2026 Shobana Sreedharan. All rights reserved.
+This project is licensed for **non-commercial use only**. See [LICENSE](./LICENSE) for full terms.
 
-This project is publicly viewable for portfolio and demonstration purposes only.
-**Commercial use is strictly prohibited.** See [LICENSE](./LICENSE) for full terms.
-
----
-
-## Author
-
-**Shobana Sreedharan**
-
-- [email](shobana.sreedharan@gmail.com)
-
-- [LinkedIn](https://www.linkedin.com/in/shobana-sreedharan-4711801a/)
+Copyright © 2026 Shobana Sreedharan

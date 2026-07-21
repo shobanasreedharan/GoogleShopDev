@@ -1,29 +1,32 @@
+Non-Commercial Use License
+
 Copyright (c) 2026 Shobana Sreedharan
 
-All rights reserved.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to
+use, copy, modify, merge, publish, and distribute copies of the Software,
+subject to the following conditions:
 
-This software and associated documentation files (the "Software") are the 
-exclusive property of Shobana Sreedharan. The Software is made publicly 
-viewable for portfolio and demonstration purposes only.
+1. NON-COMMERCIAL USE ONLY
+   The Software may not be used, in whole or in part, for any commercial
+   purpose. Commercial purposes include, but are not limited to: selling
+   the Software or derivative works, offering the Software as a paid
+   service, using the Software to generate revenue directly or indirectly,
+   or incorporating the Software into a commercial product or service.
 
-PERMISSIONS:
-- Viewing and reading the source code is permitted.
-- Forking for personal, non-commercial learning is permitted with attribution.
+2. ATTRIBUTION
+   The above copyright notice and this permission notice shall be included
+   in all copies or substantial portions of the Software.
 
-RESTRICTIONS:
-- Commercial use of this Software, in whole or in part, is strictly prohibited.
-- Redistribution, sublicensing, or selling of this Software is prohibited.
-- Modification and distribution of derivative works for commercial purposes 
-  is prohibited.
-- Use of this Software in any product or service that generates revenue is 
-  prohibited without explicit written permission from the owner.
+3. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
 
-ATTRIBUTION:
-Any permitted use must include clear attribution:
-  "SmartCart AI — © 2026 Shobana Sreedharan. All rights reserved."
-
-For commercial licensing inquiries, contact the owner directly.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.
+4. PERMISSION FOR COMMERCIAL USE
+   For inquiries regarding commercial licensing, please contact the
+   copyright holder directly.
