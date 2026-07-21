@@ -1289,7 +1289,7 @@ export default function SmartCartAI() {
 
   const handleApproveWeekPlan = async () => {
     if (!weekPlan) return;
-    console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
+    //console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
     setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
@@ -1333,6 +1333,22 @@ export default function SmartCartAI() {
   const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
   const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
   const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
+  const weekPlanStoreComparisons = (weekPlan?.recommended_stores || [])
+    .map((store, index) => {
+      const basketPrice = Number(store?.basket_price ?? store?.total_price ?? 0);
+      const firstItem = Array.isArray(store?.items) ? store.items[0] : null;
+      const firstBreakdown = Array.isArray(store?.price_breakdown) ? store.price_breakdown[0] : null;
+      return {
+        ...store,
+        _index: index,
+        _storeName: store?.store_name || store?.name || store?.store || "Store",
+        _basketPrice: Number.isFinite(basketPrice) ? basketPrice : 0,
+        _distanceKm: Number(store?.distance_km ?? store?.distance ?? 0),
+        _currency: firstItem?.currency || firstBreakdown?.currency || store?.currency || "USD",
+      };
+    })
+    .sort((a,b) => a._basketPrice - b._basketPrice);
+  const weekPlanCheapestPrice = weekPlanStoreComparisons.length ? weekPlanStoreComparisons[0]._basketPrice : null;
 
   if (authLoading) return (
     <><style>{css}</style>
@@ -1485,6 +1501,30 @@ export default function SmartCartAI() {
                       </div>
                     ))}
                   </div>
+                  {!!weekPlanStoreComparisons.length && (
+                    <div style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap" }}>
+                        <div style={{ fontSize:12, fontWeight:800, color:T.ink, letterSpacing:"0.05em", textTransform:"uppercase" }}>Compare Nearby Stores</div>
+                        <div style={{ fontSize:11, color:T.inkSec }}>Sorted by basket price</div>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
+                        {weekPlanStoreComparisons.map(store => {
+                          const isCheapest = Math.abs(store._basketPrice - weekPlanCheapestPrice) < 0.001;
+                          const distance = Number.isFinite(store._distanceKm) && store._distanceKm > 0 ? `${store._distanceKm.toFixed(1)} km away` : "Nearby";
+                          return (
+                            <div key={`${store._storeName}-${store._index}`} style={{ padding:"10px 12px", border:`1px solid ${isCheapest?T.green+"66":T.border}`, borderRadius:6, background:isCheapest?T.greenLight:T.surface, display:"grid", gap:5 }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                                <div style={{ fontSize:13, fontWeight:800, color:isCheapest?T.green:T.ink, lineHeight:1.25 }}>{store._storeName}</div>
+                                {isCheapest && <span style={{ fontSize:10, fontWeight:800, color:T.green, whiteSpace:"nowrap" }}>✓ CHEAPEST</span>}
+                              </div>
+                              <div style={{ fontSize:11, color:T.inkSec }}>{distance}</div>
+                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, fontWeight:700, color:isCheapest?T.green:T.ink }}>{formatPrice(store._basketPrice, store._currency)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <AgentTrace steps={weekPlan.steps||[]} />
                   {!!weekPlan.combined_shopping_list?.length && (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
