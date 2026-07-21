@@ -1303,7 +1303,7 @@ export default function SmartCartAI() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
-      setWeekPlanSaveMsg("Plan saved to your profile.");
+      setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
     } catch (e) {
       setWeekPlanError(e.message);
     }
