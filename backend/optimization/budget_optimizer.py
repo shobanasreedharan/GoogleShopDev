@@ -226,13 +226,99 @@ def optimize_for_budget(
     }
 
 
+def _store_name(store: dict) -> str:
+    return str(store.get("store_name") or store.get("name") or store.get("store") or "").strip()
+
+
+def _store_total(store: dict) -> float | None:
+    try:
+        total = float(store.get("basket_price", 0))
+    except (TypeError, ValueError):
+        return None
+    if total > 0:
+        return round(total, 2)
+
+    breakdown = store.get("price_breakdown") or {}
+    if not isinstance(breakdown, dict) or not breakdown:
+        return None
+
+    total = 0.0
+    found_price = False
+    for value in breakdown.values():
+        raw_price = value.get("price") if isinstance(value, dict) else value
+        try:
+            total += float(raw_price)
+            found_price = True
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2) if found_price and total > 0 else None
+
+
+def _budget_from_recommended_stores(
+    shopping_list: list,
+    weekly_budget: float,
+    recommended_stores: list,
+) -> dict | None:
+    priced_stores = []
+    for store in recommended_stores or []:
+        if not isinstance(store, dict):
+            continue
+        name = _store_name(store)
+        total = _store_total(store)
+        if name and total is not None:
+            priced_stores.append({"name": name, "total": total, "store": store})
+
+    if not priced_stores:
+        return None
+
+    cheapest = min(priced_stores, key=lambda item: item["total"])
+    expensive = max(priced_stores, key=lambda item: item["total"])
+    has_comparison = len(priced_stores) >= 2
+
+    category_totals = defaultdict(float)
+    cheapest_breakdown = cheapest["store"].get("price_breakdown") or {}
+    for item in shopping_list:
+        category = categorize_item(item)
+        data = cheapest_breakdown.get(item)
+        raw_price = data.get("price") if isinstance(data, dict) else data
+        try:
+            category_totals[category] += float(raw_price)
+        except (TypeError, ValueError):
+            pass
+
+    optimized_cost = cheapest["total"]
+    original_cost = expensive["total"] if has_comparison else cheapest["total"]
+
+    note = None if has_comparison else "insufficient store data for cheapest vs expensive comparison"
+    optimization = {
+        "optimized_list": shopping_list,
+        "original_cost": round(original_cost, 2),
+        "optimized_cost": round(optimized_cost, 2),
+        "money_saved": max(round(original_cost - optimized_cost, 2), 0),
+        "substitutions": [],
+        "cheapest_store": cheapest["name"],
+        "expensive_store": expensive["name"] if has_comparison else None,
+        "store_totals": {store["name"]: store["total"] for store in priced_stores},
+        "source": "recommended_stores",
+    }
+    if note:
+        optimization["note"] = note
+
+    return {
+        "budget": weekly_budget,
+        "category_breakdown": {k: round(v, 2) for k, v in category_totals.items()},
+        "optimization": optimization,
+    }
+
+
 # =====================================================
 # WEEKLY BUDGET PLANNER (main entry point)
 # =====================================================
 
 def weekly_budget_planner(
     weekly_shopping_list: list,
-    weekly_budget: float
+    weekly_budget: float,
+    recommended_stores: list | None = None,
 ) -> dict:
     """
     Full budget analysis:
@@ -240,6 +326,14 @@ def weekly_budget_planner(
     - Real price optimization
     - Savings vs worst-case store
     """
+
+    store_budget = _budget_from_recommended_stores(
+        weekly_shopping_list,
+        weekly_budget,
+        recommended_stores or [],
+    )
+    if store_budget is not None:
+        return store_budget
 
     category_totals = defaultdict(float)
 

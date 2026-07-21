@@ -24,7 +24,7 @@ class WeekPlanAgentTests(unittest.TestCase):
         sys.modules["backend.agent.unified_ai_agent"] = unified
 
         budget = types.ModuleType("backend.optimization.budget_optimizer")
-        budget.weekly_budget_planner = lambda items, weekly_budget: {
+        budget.weekly_budget_planner = lambda items, weekly_budget, recommended_stores=None: {
             "budget": weekly_budget,
             "optimization": {
                 "optimized_list": items,

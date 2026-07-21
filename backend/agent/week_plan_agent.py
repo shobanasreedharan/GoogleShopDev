@@ -202,6 +202,13 @@ def build_week_plan(
         store_results = clean_stores(recommend_best_store(user_location, optimized_list))
         stores = _format_stores(store_results)
         price_sources = _price_sources_from_stores(stores, optimized_list)
+        if stores:
+            budget_summary = weekly_budget_planner(
+                optimized_list,
+                budget_value,
+                recommended_stores=stores,
+            )
+            optimization = budget_summary.get("optimization", {}) or {}
         steps.append({
             "tool": "recommend_best_store",
             "status": "success" if stores else "error",

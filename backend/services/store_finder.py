@@ -74,6 +74,78 @@ def normalize_store_brand(name):
 
 
 # =====================================================
+# PLACE FILTERING
+# =====================================================
+
+GROCERY_PLACE_TYPES = {
+    "grocery_or_supermarket",
+    "supermarket",
+}
+
+NON_GROCERY_PLACE_TYPES = {
+    "bakery",
+    "bar",
+    "cafe",
+    "gas_station",
+    "liquor_store",
+    "meal_delivery",
+    "meal_takeaway",
+    "restaurant",
+}
+
+GROCERY_NAME_HINTS = (
+    "aldi",
+    "costco",
+    "deli",
+    "food",
+    "foods",
+    "fresh",
+    "grocer",
+    "grocery",
+    "h-e-b",
+    "heb",
+    "kroger",
+    "market",
+    "mart",
+    "publix",
+    "safeway",
+    "schnucks",
+    "sprouts",
+    "supermarket",
+    "trader joe",
+    "walmart",
+    "whole foods",
+)
+
+NON_GROCERY_NAME_HINTS = (
+    "bp",
+    "cafe",
+    "coffee",
+    "el torito",
+    "gas",
+    "grill",
+    "kitchen",
+    "restaurant",
+    "shell",
+    "taqueria",
+)
+
+
+def _is_grocery_place(place):
+    """Keep only plausible grocery/supermarket results from Places."""
+    types = set(place.get("types") or [])
+    name = (place.get("name") or "").strip().lower()
+
+    if types & NON_GROCERY_PLACE_TYPES:
+        return False
+    if any(hint == name or hint in name for hint in NON_GROCERY_NAME_HINTS):
+        return False
+    if types & GROCERY_PLACE_TYPES:
+        return True
+    return any(hint in name for hint in GROCERY_NAME_HINTS)
+
+
+# =====================================================
 # NEARBY STORES
 # =====================================================
 
@@ -140,10 +212,15 @@ def find_nearby_grocery_stores(lat, lng, radius=15000):
     seen_place_ids = set()
 
     for place in all_results:
-        place_id = place.get("place_id")
-        if place_id in seen_place_ids:
+        if not _is_grocery_place(place):
+            print("[stores] filtered non-grocery place:", place.get("name"), place.get("types"))
             continue
-        seen_place_ids.add(place_id)
+
+        place_id = place.get("place_id")
+        if place_id:
+            if place_id in seen_place_ids:
+                continue
+            seen_place_ids.add(place_id)
 
         loc = place.get("geometry", {}).get("location")
         if not isinstance(loc, dict):
@@ -219,47 +296,65 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
     """
     from backend.db.store_prices_repository import get_currency_for_country, get_lowest_receipt_price_for_item
 
+    try:
+        from backend.db.store_prices_repository import get_real_price
+    except ImportError:
+        get_real_price = None
+
     currency = get_currency_for_country(country)
     inventory = {}
+    lower = (store_name or "").lower()
 
     for item in shopping_list:
-        receipt_price = None
-        if city:
-            try:
-                real_price = get_real_price(item, store_name, city, state, country)
-            except Exception:
-                pass
-
-        if real_price is not None:
-            inventory[item] = {
-                "available": True,
-                "price": real_price["price"],
-                "currency": real_price["currency"],
-                "note": "real price from receipt",
-                "source": "receipt",
-            }
+        item_name = str(item).strip()
+        if not item_name:
             continue
 
-        # Fall back to mock price
-        available = (hash(store_name + item) % 100) > 20
-        base_price = ((hash(item + store_name) % 500) / 100) + 1
-        multiplier = 1.0
+        price = None
+        item_currency = currency
+        note = "Estimated price for this store"
+        source = "estimate"
+        price_store = store_name
+        receipt_price = None
 
-        if "aldi" in lower:
-            multiplier = 0.85
-        elif "costco" in lower:
-            multiplier = 0.80
-        elif "whole foods" in lower:
-            multiplier = 1.35
-        elif "walmart" in lower:
-            multiplier = 0.90
-        elif "target" in lower:
-            multiplier = 1.05
+        if city:
+            if get_real_price is not None:
+                try:
+                    receipt_price = get_real_price(item_name, store_name, city, state, country)
+                except Exception as e:
+                    print(f"[store] exact receipt lookup failed for {item_name} at {store_name}: {e}")
+                    receipt_price = None
 
-        price = round(base_price * multiplier * scale, 2) if available else None
-        inventory[item] = {
+            if receipt_price is None:
+                try:
+                    receipt_price = get_lowest_receipt_price_for_item(item_name, city, state, country)
+                except Exception as e:
+                    print(f"[store] city receipt lookup failed for {item_name} at {store_name}: {e}")
+                    receipt_price = None
+
+            if receipt_price is not None:
+                price = float(receipt_price["price"])
+                item_currency = receipt_price.get("currency", currency)
+                note = "Receipt-derived city price"
+                source = receipt_price.get("source", "receipt")
+                price_store = receipt_price.get("store_name", store_name)
+
+        if price is None:
+            price = _estimate_price(item_name, store_name, currency)
+            if "aldi" in lower:
+                note = "Estimated price adjusted for Aldi"
+            elif "costco" in lower:
+                note = "Estimated price adjusted for Costco"
+            elif "whole foods" in lower:
+                note = "Estimated price adjusted for Whole Foods"
+            elif "walmart" in lower:
+                note = "Estimated price adjusted for Walmart"
+            elif "target" in lower:
+                note = "Estimated price adjusted for Target"
+
+        inventory[item_name] = {
             "available": True,
-            "price": price,
+            "price": round(float(price), 2),
             "currency": item_currency,
             "note": note,
             "source": source,
