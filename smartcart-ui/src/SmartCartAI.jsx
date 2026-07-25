@@ -1306,44 +1306,59 @@ export default function SmartCartAI() {
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
       return json;
     } catch (e) {
-      setWeekPlanError(e.message);
+      const message = e.message || "Plan My Week failed";
+      setWeekPlanError(message);
+      throw new Error(message);
     } finally {
       setWeekPlanLoading(false);
     }
   };
 
   const handleApproveWeekPlan = async (planOverride = weekPlan) => {
-    if (!planOverride) return;
-    //console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
-    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    const planToApprove = planOverride || weekPlan;
+    if (!planToApprove) {
+      const message = "Generate a weekly plan before saving.";
+      setWeekPlanError(message);
+      throw new Error(message);
+    }
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
-          suggested_meals: planOverride.suggested_meals,
-          combined_shopping_list: planOverride.combined_shopping_list,
-          meal_ingredients: planOverride.meal_ingredients,
-          nutrition_report: planOverride.nutrition_report,
+          suggested_meals: planToApprove.suggested_meals,
+          combined_shopping_list: planToApprove.combined_shopping_list,
+          meal_ingredients: planToApprove.meal_ingredients,
+          nutrition_report: planToApprove.nutrition_report,
           dietary_instruction: dietary,
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
       setWeekPlanSaveMsg({ type: "success", text: "Smart plan generated and saved to your recipe cache." });
-      setData(weekPlanToResults(planOverride));
+      setData(weekPlanToResults(planToApprove));
       setActiveTab("list");
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
       return json;
     } catch (e) {
-      setWeekPlanError(e.message);
+      const message = e.message || "Generate Smart Plan failed";
+      setWeekPlanError(message);
+      throw new Error(message);
+    } finally {
+      setWeekPlanLoading(false);
     }
   };
 
   const handleGenerateAiPlanner = async () => {
-    const plan = weekPlan || await handlePlanMyWeek();
-    if (plan) await handleApproveWeekPlan(plan);
+    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const plan = weekPlan || await handlePlanMyWeek();
+      if (plan) await handleApproveWeekPlan(plan);
+    } catch (e) {
+      setWeekPlanError(e.message || "Generate Smart Plan failed");
+    }
   };
 
   const submitManualLocation = () => {
@@ -1386,6 +1401,7 @@ export default function SmartCartAI() {
     })
     .sort((a,b) => a._basketPrice - b._basketPrice);
   const weekPlanCheapestPrice = weekPlanStoreComparisons.length ? weekPlanStoreComparisons[0]._basketPrice : null;
+  const hasWeekPlanTotals = Number(weekPlan?.original_total) > 0 && Number(weekPlan?.optimized_total) > 0;
   const weekPlanMealsByDay = DAYS.map(day => ({
     day,
     meals: ["Breakfast", "Lunch", "Dinner"].map(mealType => {
@@ -1553,18 +1569,20 @@ export default function SmartCartAI() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-                    {[
-                      { label:"Original", value:formatPrice(Number(weekPlan.original_total||0)), color:T.red },
-                      { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total||0)), color:T.green },
-                      { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
-                    ].map(m => (
-                      <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
-                        <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
-                      </div>
-                    ))}
-                  </div>
+                  {hasWeekPlanTotals && (
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                      {[
+                        { label:"Original", value:formatPrice(Number(weekPlan.original_total)), color:T.red },
+                        { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total)), color:T.green },
+                        { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
+                      ].map(m => (
+                        <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
+                          <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {!!weekPlanStoreComparisons.length && (
                     <div style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap" }}>
