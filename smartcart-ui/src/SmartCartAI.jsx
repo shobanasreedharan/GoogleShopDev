@@ -1114,7 +1114,6 @@ export default function SmartCartAI() {
   const [weekPlan,        setWeekPlan]        = useState(null);
   const [weekPlanLoading, setWeekPlanLoading] = useState(false);
   const [weekPlanError,   setWeekPlanError]   = useState(null);
-  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -1284,7 +1283,7 @@ export default function SmartCartAI() {
   });
 
   const handlePlanMyWeek = async () => {
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
@@ -1385,23 +1384,6 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
   const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
   const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
   const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
-  const weekPlanStoreComparisons = (weekPlan?.recommended_stores || [])
-    .map((store, index) => {
-      const basketPrice = Number(store?.basket_price ?? store?.total_price ?? 0);
-      const firstItem = Array.isArray(store?.items) ? store.items[0] : null;
-      const firstBreakdown = Array.isArray(store?.price_breakdown) ? store.price_breakdown[0] : null;
-      return {
-        ...store,
-        _index: index,
-        _storeName: store?.store_name || store?.name || store?.store || "Store",
-        _basketPrice: Number.isFinite(basketPrice) ? basketPrice : 0,
-        _distanceKm: Number(store?.distance_km ?? store?.distance ?? 0),
-        _currency: firstItem?.currency || firstBreakdown?.currency || store?.currency || "USD",
-      };
-    })
-    .sort((a,b) => a._basketPrice - b._basketPrice);
-  const weekPlanCheapestPrice = weekPlanStoreComparisons.length ? weekPlanStoreComparisons[0]._basketPrice : null;
-  const hasWeekPlanTotals = Number(weekPlan?.original_total) > 0 && Number(weekPlan?.optimized_total) > 0;
   const weekPlanMealsByDay = DAYS.map(day => ({
     day,
     meals: ["Breakfast", "Lunch", "Dinner"].map(mealType => {
@@ -1565,52 +1547,6 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                       </div>
                     ))}
                   </div>
-                  {hasWeekPlanTotals && (
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-                      {[
-                        { label:"Original", value:formatPrice(Number(weekPlan.original_total)), color:T.red },
-                        { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total)), color:T.green },
-                        { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
-                      ].map(m => (
-                        <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
-                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
-                          <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {!!weekPlanStoreComparisons.length && (
-                    <div style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap" }}>
-                        <div style={{ fontSize:12, fontWeight:800, color:T.ink, letterSpacing:"0.05em", textTransform:"uppercase" }}>Compare Nearby Stores</div>
-                        <div style={{ fontSize:11, color:T.inkSec }}>Sorted by basket price</div>
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
-                        {weekPlanStoreComparisons.map(store => {
-                          const isCheapest = Math.abs(store._basketPrice - weekPlanCheapestPrice) < 0.001;
-                          const distance = Number.isFinite(store._distanceKm) && store._distanceKm > 0 ? `${store._distanceKm.toFixed(1)} km away` : "Nearby";
-                          return (
-                            <div key={`${store._storeName}-${store._index}`} style={{ padding:"10px 12px", border:`1px solid ${isCheapest?T.green+"66":T.border}`, borderRadius:6, background:isCheapest?T.greenLight:T.surface, display:"grid", gap:5 }}>
-                              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                                <div style={{ fontSize:13, fontWeight:800, color:isCheapest?T.green:T.ink, lineHeight:1.25 }}>{store._storeName}</div>
-                                {isCheapest && <span style={{ fontSize:10, fontWeight:800, color:T.green, whiteSpace:"nowrap" }}>✓ CHEAPEST</span>}
-                              </div>
-                              <div style={{ fontSize:11, color:T.inkSec }}>{distance}</div>
-                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, fontWeight:700, color:isCheapest?T.green:T.ink }}>{formatPrice(store._basketPrice, store._currency)}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  <AgentTrace steps={weekPlan.steps||[]} />
-                  {!!weekPlan.combined_shopping_list?.length && (
-                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
-                    </div>
-                  )}
-                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
-                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
                 </div>
               )}
             </Card>}
