@@ -36,6 +36,7 @@ from backend.db.rate_limit_repository import (
 import base64
 from backend.db.store_prices_repository import save_store_prices
 from backend.db.pantry_repository import get_pantry, save_pantry
+from backend.db.meal_plan_repository import save_meal_plan, list_meal_plan_recipes, save_generated_meal_recipe
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -148,6 +149,22 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
 
+class PlanMyWeekRequest(BaseModel):
+    dietary_instruction: str = "None"
+    pantry_items: List[str] = []
+    budget: float = 100
+    user_lat: float | None = None
+    user_lng: float | None = None
+    manual_city: str | None = None
+    manual_state: str | None = None
+    manual_postal_code: str | None = None
+
+class ApproveWeekPlanRequest(PlanMyWeekRequest):
+    weekly_meals: Dict[str, str] = {}
+    shopping_list: List[str] = []
+    budget_summary: dict = {}
+    nutrition_report: dict = {}
+
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
     media_type:   str        # "image/jpeg" | "image/png" | "application/pdf"
@@ -258,6 +275,88 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+def _parse_json_object(text: str) -> dict:
+    cleaned = (text or "").replace("```json", "").replace("```", "").strip()
+    return json.loads(cleaned)
+
+
+def generate_weekly_meals(user_id: str, dietary_instruction: str, pantry_items: list) -> dict:
+    """
+    Build a 7-day plan from users/{uid}/meal_plans first, then generate only the
+    missing meals and immediately save those generated meals back to meal_plans.
+    """
+    saved_meals = list_meal_plan_recipes(user_id)
+    weekly = {}
+    reused = []
+    generated = []
+
+    for day, meal in zip(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], saved_meals[:7]):
+        weekly[day] = meal
+        reused.append(meal)
+
+    missing_days = [day for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] if day not in weekly]
+    if missing_days:
+        prompt = f"""Return ONLY JSON for family weekly meals.
+Dietary preference: {dietary_instruction}
+Pantry items: {pantry_items}
+Already selected meals, do not repeat: {list(weekly.values())}
+Create exactly {len(missing_days)} simple dinner meal names for these days: {missing_days}.
+Format: {{"meals": {{"Monday": "meal name"}}}}"""
+
+        def generate_with_gemini(ai_prompt: str) -> str:
+            from vertexai.generative_models import GenerativeModel
+            model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+            return model.generate_content(ai_prompt).text
+
+        try:
+            text, _ = generate_primary_or_fallback(prompt, generate_with_gemini, log_prefix="plan_my_week")
+            new_meals = _parse_json_object(text).get("meals", {})
+        except Exception as e:
+            print(f"[plan_my_week] generation failed, using fallback meals: {e}")
+            fallback = ["vegetable stir fry", "bean tacos", "pasta primavera", "lentil soup", "rice bowls", "sheet pan vegetables", "chickpea curry"]
+            new_meals = {day: fallback[i % len(fallback)] for i, day in enumerate(missing_days)}
+
+        for day in missing_days:
+            meal = " ".join(str(new_meals.get(day, "")).strip().split()) or f"Family dinner {day}"
+            weekly[day] = meal
+            generated.append(meal)
+            save_generated_meal_recipe(user_id, day, meal)
+
+    return {"weekly_meals": weekly, "reused_recipes": reused, "generated_recipes": generated}
+
+
+@app.post("/plan-my-week")
+def plan_my_week(req: PlanMyWeekRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    pantry = get_pantry(uid) or []
+    if req.pantry_items:
+        pantry = req.pantry_items
+    plan = generate_weekly_meals(uid, req.dietary_instruction, pantry)
+    return {**plan, "pantry_items": pantry, "success": True}
+
+
+@app.post("/plan-my-week/approve")
+def approve_week_plan(req: ApproveWeekPlanRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    result = run_grocery_pipeline(
+        user_id=uid,
+        weekly_meals=req.weekly_meals,
+        manual_items=[],
+        budget=req.budget,
+        pantry_items=req.pantry_items,
+        dietary_instruction=req.dietary_instruction,
+        mode="🤖 AI Planner",
+        user_lat=req.user_lat,
+        user_lng=req.user_lng,
+        manual_city=req.manual_city,
+        manual_state=req.manual_state,
+        manual_postal_code=req.manual_postal_code,
+    )
+    save_meal_plan(uid, req.weekly_meals, result.get("shopping_list", []), result.get("budget_summary", {}), result.get("nutrition_report", {}))
+    return {**result, "success": True}
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
@@ -302,7 +401,7 @@ If no backend tools matched this message, answer normally without claiming you c
     increment_usage(uid, "chat")
 
     return build_chat_response_payload(
-        response_text=response.text,
+        response_text=response_text,
         session_id=req.session_id,
         tool_results=tool_results,
         usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},

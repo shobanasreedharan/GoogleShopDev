@@ -1101,6 +1101,10 @@ export default function SmartCartAI() {
   const [manualState, setManualState] = useState("");
   const [manualPostalCode, setManualPostalCode] = useState("");
   const [manualLocationSet, setManualLocationSet] = useState(false);
+  const [aiPlannerMeals, setAiPlannerMeals] = useState({});
+  const [aiPlannerMeta, setAiPlannerMeta] = useState(null);
+  const [aiPlannerLoading, setAiPlannerLoading] = useState(false);
+  const [aiPlannerApproving, setAiPlannerApproving] = useState(false);
 
   useEffect(() => {
   if (navigator.geolocation) {
@@ -1181,6 +1185,66 @@ export default function SmartCartAI() {
   };
 
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
+
+  const handlePlanMyWeek = async () => {
+    setError(null); setData(null); setAiPlannerLoading(true); setAiPlannerMeta(null);
+    const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({
+          dietary_instruction: dietary,
+          pantry_items: pantryItems,
+          budget: 100,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setAiPlannerMeals(json.weekly_meals || {});
+      setWeeklyMeals(json.weekly_meals || {});
+      setAiPlannerMeta({ reused: json.reused_recipes || [], generated: json.generated_recipes || [] });
+      syncPantry(pantryItems).catch(e => console.warn("Pantry sync failed", e));
+    } catch(e) {
+      setError(e.message||"Plan my week failed.");
+    } finally { setAiPlannerLoading(false); }
+  };
+
+  const handleApproveWeekPlan = async () => {
+    const weekly = Object.fromEntries(Object.entries(aiPlannerMeals).filter(([,v])=>String(v).trim()));
+    if (!Object.keys(weekly).length) {
+      setError("Click Plan my week before generating the smart plan.");
+      return;
+    }
+    setError(null); setData(null); setAiPlannerApproving(true);
+    const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
+    try {
+      const payload = {
+        weekly_meals: weekly,
+        shopping_list: [],
+        budget: 100,
+        pantry_items: pantryItems,
+        dietary_instruction: dietary,
+        ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
+        ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
+      };
+      lastPayloadRef.current = { ...payload, mode:"🤖 AI Planner" };
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      setData(json); setActiveTab("list");
+      syncPantry(pantryItems).catch(e => console.warn("Pantry sync failed", e));
+      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
+    } catch(e) {
+      setError(e.message||"Generate Smart Plan failed.");
+    } finally { setAiPlannerApproving(false); }
+  };
 
   const handleGenerate = async () => {
     setError(null); setData(null); setLoading(true);
@@ -1334,11 +1398,35 @@ export default function SmartCartAI() {
             <Card className="fu" style={{ marginBottom:"2rem" }}>
               <SectionHead label="Plan Your Groceries" sub="AI builds your optimized shopping plan" />
               <div style={{ display:"flex", gap:8, marginBottom:"1.5rem", flexWrap:"wrap" }}>
+                <ModeBtn active={mode==="aiPlanner"} onClick={()=>setMode("aiPlanner")}>🤖 AI Planner</ModeBtn>
                 <ModeBtn active={mode==="meal"}   onClick={()=>setMode("meal")}>🍽️ Single Meal</ModeBtn>
                 <ModeBtn active={mode==="weekly"} onClick={()=>setMode("weekly")}>📅 Weekly Plan</ModeBtn>
                 <ModeBtn active={mode==="list"}   onClick={()=>setMode("list")}>🛍️ Shopping List</ModeBtn>
                 <ModeBtn active={mode==="both"}   onClick={()=>setMode("both")}>🍽️ + 🛍️ Both</ModeBtn>
               </div>
+              {mode==="aiPlanner" && (
+                <div style={{ display:"grid", gap:"1rem", marginBottom:"1.25rem" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"1rem" }}>
+                    <Select label="Dietary preference" value={dietary} onChange={e=>setDietary(e.target.value)} options={DIETS}/>
+                    <Textarea label="Pantry items (comma separated)" value={pantryText} onChange={e=>setPantryText(e.target.value)} placeholder="rice, beans, spinach..." rows={2}/>
+                  </div>
+                  <button onClick={handlePlanMyWeek} disabled={aiPlannerLoading} style={{ width:"100%", padding:"14px", background:aiPlannerLoading?T.borderDark:T.green, color:"#FFF", border:"none", borderRadius:4, fontSize:14, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", cursor:aiPlannerLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif" }}>
+                    {aiPlannerLoading ? "Planning your week…" : "📅 Plan my week"}
+                  </button>
+                  {Object.keys(aiPlannerMeals).length > 0 && (
+                    <Card style={{ background:T.surfaceAlt }}>
+                      <SectionHead label="Plan my week" sub="Saved Firestore meal_plans are reused first; AI fills only missing days." />
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginBottom:"1rem" }}>
+                        {DAYS.map(day=><Input key={day} label={day} value={aiPlannerMeals[day]??""} onChange={e=>setAiPlannerMeals(p=>({...p,[day]:e.target.value}))} placeholder="Meal..."/>) }
+                      </div>
+                      {aiPlannerMeta && <p style={{ fontSize:12, color:T.inkSec, marginBottom:"1rem" }}>Reused {aiPlannerMeta.reused.length} saved recipe(s); generated and saved {aiPlannerMeta.generated.length} new recipe(s).</p>}
+                      <button onClick={handleApproveWeekPlan} disabled={aiPlannerApproving} style={{ width:"100%", padding:"14px", background:aiPlannerApproving?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:14, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", cursor:aiPlannerApproving?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif" }}>
+                        {aiPlannerApproving ? "Generating smart plan…" : "✨ Generate Smart Plan"}
+                      </button>
+                    </Card>
+                  )}
+                </div>
+              )}
               {mode==="meal" && <div style={{ marginBottom:"1.25rem" }}><Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/></div>}
               {mode==="weekly" && (
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginBottom:"1.25rem" }}>
