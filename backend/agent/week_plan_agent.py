@@ -4,6 +4,7 @@ from typing import Any
 from backend.agent.cart_optimization_agent import _normalize_items, _remove_pantry_items
 from backend.agent.unified_ai_agent import generate_text, run_unified_ai
 from backend.optimization.budget_optimizer import weekly_budget_planner
+from backend.optimization.route_optimizer import optimize_route
 from backend.services.location import get_user_location
 from backend.services.store_finder import recommend_best_store
 from backend.utils.sanitizers import clean_stores
@@ -54,14 +55,6 @@ def _fallback_weekly_meals(pantry_items: list[str], count: int = 21) -> list[dic
             "reason": f"Works well with {pantry_hint}.",
         }
         for index in range(count)
-]
-
-
-def _fallback_weekly_meals(pantry_items: list[str], count: int = 5) -> list[dict[str, str]]:
-    pantry_hint = ", ".join(pantry_items[:3]) if pantry_items else "basic staples"
-    return [
-        {"name": meal, "reason": f"Works well with {pantry_hint}."}
-        for meal in DEFAULT_WEEKLY_MEALS[:count]
     ]
 
 
@@ -234,6 +227,9 @@ def build_week_plan(
         )
         full_shopping_list = _normalize_items(ai_result.get("shopping_list", []))
         print(f"[plan-my-week] raw shopping list built: {len(full_shopping_list)} items")
+        if not full_shopping_list and weekly_meals:
+            reason = ai_result.get("_error_message") or "Ingredient generation returned an empty shopping list"
+            raise ValueError(reason)
     except Exception as e:
         print(f"[plan-my-week] ingredient generation failed: {e}")
         full_shopping_list = _normalize_items([meal["name"] for meal in suggested_meals])

@@ -1314,7 +1314,7 @@ export default function SmartCartAI() {
     }
   };
 
-  const handleApproveWeekPlan = async (planOverride = weekPlan) => {
+const handleApproveWeekPlan = async (planOverride = weekPlan) => {
     const planToApprove = planOverride || weekPlan;
     if (!planToApprove) {
       const message = "Generate a weekly plan before saving.";
@@ -1542,15 +1542,11 @@ export default function SmartCartAI() {
                   <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Plan My Week</div>
                   <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>One agent action chains pantry, 21 weekly meals, shopping list, budget, route, and receipt-aware store prices.</div>
                 </div>
+                <button onClick={()=>handlePlanMyWeek().catch(()=>{})} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.blue, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
+                  {weekPlanLoading ? "Planning…" : "✨ Plan My Week"}
+                </button>
               </div>
               {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
-              {!weekPlan && (
-                <div style={{ marginTop:"1rem", display:"flex", justifyContent:"flex-end" }}>
-                  <button onClick={()=>handleGenerateAiPlanner()} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
-                    {weekPlanLoading ? "Generating…" : "Generate Smart Plan"}
-                  </button>
-                </div>
-              )}
               {weekPlan && (
                 <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:10 }}>
@@ -1614,10 +1610,6 @@ export default function SmartCartAI() {
                     </div>
                   )}
                   {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
-                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
-                    <button onClick={()=>handleGenerateAiPlanner()} disabled={weekPlanLoading} style={{ padding:"9px 16px", background:weekPlanLoading?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>{weekPlanLoading ? "Generating…" : "Generate Smart Plan"}</button>
-                  </div>
                   {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
                 </div>
               )}
