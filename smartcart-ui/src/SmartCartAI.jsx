@@ -1315,6 +1315,53 @@ export default function SmartCartAI() {
     }
   };
 
+const handleApproveWeekPlan = async (planOverride = weekPlan) => {
+    const planToApprove = planOverride || weekPlan;
+    if (!planToApprove) {
+      const message = "Generate a weekly plan before saving.";
+      setWeekPlanError(message);
+      throw new Error(message);
+    }
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          suggested_meals: planToApprove.suggested_meals,
+          combined_shopping_list: planToApprove.combined_shopping_list,
+          meal_ingredients: planToApprove.meal_ingredients,
+          nutrition_report: planToApprove.nutrition_report,
+          dietary_instruction: dietary,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
+      setWeekPlanSaveMsg({ type: "success", text: "Smart plan generated and saved to your recipe cache." });
+      setData(weekPlanToResults(planToApprove));
+      setActiveTab("list");
+      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
+      return json;
+    } catch (e) {
+      const message = e.message || "Generate Smart Plan failed";
+      setWeekPlanError(message);
+      throw new Error(message);
+    } finally {
+      setWeekPlanLoading(false);
+    }
+  };
+
+  const handleGenerateAiPlanner = async () => {
+    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const plan = weekPlan || await handlePlanMyWeek();
+      if (plan) await handleApproveWeekPlan(plan);
+    } catch (e) {
+      setWeekPlanError(e.message || "Generate Smart Plan failed");
+    }
+  };
+
   const submitManualLocation = () => {
     const hasCityState = manualCity.trim() && manualState.trim();
     const hasPostalCode = manualPostalCode.trim();
