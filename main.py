@@ -1,9 +1,17 @@
-"""Compatibility entry point for deployments that import main:app.
+from dotenv import load_dotenv
+load_dotenv()
 
-The canonical FastAPI application lives in backend.api.main.
-"""
+import os
+import json
+import httpx
+import time
+import traceback
+from contextlib import asynccontextmanager
+from typing import List, Dict
 
-from backend.api.main import app
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -43,7 +51,7 @@ APP_NAME = "smartcart"
 runner = None
 
 
-# ── MCP helper (proper MCP protocol) ─────────────────────────────────────────
+# ── MCP helper (proper MCP protocol) ────────────────────────────────────────
 async def call_mcp_tool(tool_name: str, arguments: dict) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         req_id = int(time.time() * 1000)
@@ -108,7 +116,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Smart Grocery AI",
     version="1.0.0",
@@ -129,7 +137,7 @@ app.add_middleware(
 )
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Models ───────────────────────────────────────────────────────────────────
 class DishRequest(BaseModel):
     weekly_meals:           dict           = {}
     manual_items:           List[str]      = []
@@ -165,9 +173,24 @@ class PlanMyWeekRequest(BaseModel):
     manual_state: str | None = None
     manual_postal_code: str | None = None
 
+class SuggestedMeal(BaseModel):
+    name: str | None = None
+    reason: str | None = None
+    title: str | None = None
+    description: str | None = None
+    meal: str | None = None
+    why: str | None = None
+
+class ShoppingListItem(BaseModel):
+    name: str | None = None
+    item: str | None = None
+    title: str | None = None
+
 class PlanMyWeekApproveRequest(BaseModel):
-    weekly_meals: Dict[str, str]
-    shopping_list: List[str]
+    suggested_meals: List[SuggestedMeal] | Dict[str, str | SuggestedMeal] | None = None
+    combined_shopping_list: List[str | ShoppingListItem] | Dict[str, str | float | int | ShoppingListItem] | None = None
+    weekly_meals: Dict[str, str] | None = None
+    shopping_list: List[str | ShoppingListItem] | Dict[str, str | float | int | ShoppingListItem] | None = None
     budget_summary: Dict[str, object] = {}
     nutrition_report: Dict[str, object] = {}
 
@@ -188,6 +211,78 @@ class ReceiptUploadRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     email:   str = ""
     comment: str
+
+
+def _text_or_empty(value: object) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _model_fields(value: object) -> dict:
+    if isinstance(value, BaseModel):
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        return value.dict()
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _normalize_weekly_meals(raw_meals: object) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+
+    if isinstance(raw_meals, list):
+        for meal in raw_meals:
+            fields = _model_fields(meal)
+            title = _text_or_empty(
+                fields.get("name") or fields.get("title") or fields.get("meal")
+            )
+            description = _text_or_empty(
+                fields.get("reason") or fields.get("description") or fields.get("why")
+            )
+            if title:
+                normalized[title] = description or "Suggested for the week."
+        return normalized
+
+    if isinstance(raw_meals, dict):
+        for key, value in raw_meals.items():
+            fields = _model_fields(value)
+            if fields:
+                title = _text_or_empty(
+                    fields.get("name") or fields.get("title") or fields.get("meal") or key
+                )
+                description = _text_or_empty(
+                    fields.get("reason") or fields.get("description") or fields.get("why")
+                )
+                if title:
+                    normalized[title] = description or "Suggested for the week."
+            else:
+                title = _text_or_empty(key)
+                description = _text_or_empty(value)
+                if title and description:
+                    normalized[title] = description
+
+    return normalized
+
+
+def _normalize_shopping_list(raw_items: object) -> List[str]:
+    if isinstance(raw_items, dict):
+        raw_items = list(raw_items.keys())
+    if not isinstance(raw_items, list):
+        return []
+
+    normalized: List[str] = []
+    seen = set()
+    for item in raw_items:
+        fields = _model_fields(item)
+        if fields:
+            value = _text_or_empty(fields.get("name") or fields.get("item") or fields.get("title"))
+        else:
+            value = _text_or_empty(item)
+        key = value.lower()
+        if value and key not in seen:
+            normalized.append(value)
+            seen.add(key)
+    return normalized
 
 
 # ── Add this route near your other routes (e.g. after /receipt/stores) ──
@@ -213,7 +308,7 @@ async def submit_feedback(body: FeedbackRequest, user: dict = Depends(get_curren
         return {"success": False, "error": str(e)}    
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────────────────
 @app.get("/")
 def home():
     return {"message": "Smart Grocery AI API is running 🚀"}
@@ -235,12 +330,12 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
         uid = user["uid"]
         print(f"[generate] weekly_meals received: {request.weekly_meals}")
 
-        # ── Rate limit: Places API (every /generate) ──────────────────
+        # ── Rate limit: Places API (every /generate) ─────────────────
         gen_check = check_generate_limit(uid)
         if not gen_check["allowed"]:
             raise HTTPException(status_code=429, detail=gen_check["message"])
 
-        # ── Rate limit: Gemini (cache miss only) ──────────────────────
+        # ── Rate limit: Gemini (cache miss only) ─────────────────────
         gemini_check = check_gemini_limit(uid)
         # Pass gemini_allowed into pipeline so unified_ai_agent can skip
         # Gemini and return cache-only result if limit is hit
@@ -324,12 +419,20 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
     uid = user["uid"]
     print(f"[plan-my-week] approve received for user={uid}")
     try:
-        if not request.shopping_list:
-            raise HTTPException(status_code=400, detail="shopping_list is required")
+        raw_weekly_meals = request.suggested_meals if request.suggested_meals is not None else request.weekly_meals
+        raw_shopping_list = request.combined_shopping_list if request.combined_shopping_list is not None else request.shopping_list
+        weekly_meals = _normalize_weekly_meals(raw_weekly_meals)
+        shopping_list = _normalize_shopping_list(raw_shopping_list)
+
+        if not weekly_meals:
+            raise HTTPException(status_code=400, detail="weekly_meals or suggested_meals is required")
+        if not shopping_list:
+            raise HTTPException(status_code=400, detail="shopping_list or combined_shopping_list is required")
+
         saved = save_meal_plan(
             user_id=uid,
-            weekly_meals=request.weekly_meals,
-            shopping_list=request.shopping_list,
+            weekly_meals=weekly_meals,
+            shopping_list=shopping_list,
             budget_summary=request.budget_summary,
             nutrition_report=request.nutrition_report,
         )
@@ -368,7 +471,7 @@ async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Dep
 async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
 
-    # ── Rate limit: chat ──────────────────────────────────────────────
+    # ── Rate limit: chat ─────────────────────────────────────────────
     chat_check = check_chat_limit(uid)
     if not chat_check["allowed"]:
         return {

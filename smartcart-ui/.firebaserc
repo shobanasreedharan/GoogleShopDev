@@ -9,6 +9,13 @@
           "buildweek-smartcart"
         ]
       }
+    },
+    "hackathon-grocery-ai-498023": {
+      "hosting": {
+        "buildweek": [
+          "buildweek-smartcart"
+        ]
+      }
     }
   },
   "etags": {}
