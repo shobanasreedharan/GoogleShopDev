@@ -7,6 +7,7 @@ from backend.optimization.budget_optimizer import weekly_budget_planner
 from backend.services.location import get_user_location
 from backend.services.store_finder import recommend_best_store
 from backend.utils.sanitizers import clean_stores
+from backend.db.recipe_cache_repository import list_recipes
 
 DEFAULT_WEEKLY_MEALS = [
     "Tomato Pasta",
@@ -74,6 +75,26 @@ Output format:
         return _fallback_weekly_meals(pantry_items, count), "fallback"
 
 
+
+def _cached_meals_from_pantry(user_id: str, pantry_items: list[str], dietary: str, count: int) -> list[dict[str, str]]:
+    pantry_set = set(_normalize_items(pantry_items))
+    if not pantry_set:
+        return []
+    ranked = []
+    for recipe in list_recipes(user_id):
+        meal = str(recipe.get("meal", "")).split("|")[0].strip()
+        ingredients = _normalize_items(recipe.get("ingredients", []))
+        if not meal or not ingredients:
+            continue
+        overlap = len(set(ingredients) & pantry_set)
+        if overlap:
+            ranked.append((overlap, len(ingredients), meal, ingredients))
+    ranked.sort(key=lambda row: (-row[0], row[1], row[2]))
+    return [
+        {"name": meal, "reason": f"Reuses {overlap} pantry item(s) from saved recipes."}
+        for overlap, _size, meal, _ingredients in ranked[:count]
+    ]
+
 def _format_stores(store_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
@@ -134,7 +155,15 @@ def build_week_plan(
         pantry_items = []
         steps.append({"tool": "get_pantry", "status": "error", "summary": "Pantry lookup unavailable — planning without pantry items"})
 
-    suggested_meals, meal_source = _suggest_weekly_meals(pantry_items, dietary_instruction, meal_count)
+    cached_suggestions = _cached_meals_from_pantry(user_id, pantry_items, dietary_instruction, meal_count)
+    if len(cached_suggestions) >= meal_count:
+        suggested_meals, meal_source = cached_suggestions[:meal_count], "recipe_cache"
+    else:
+        generated_meals, meal_source = _suggest_weekly_meals(pantry_items, dietary_instruction, meal_count - len(cached_suggestions))
+        seen = {meal["name"].lower() for meal in cached_suggestions}
+        suggested_meals = cached_suggestions + [meal for meal in generated_meals if meal["name"].lower() not in seen]
+        suggested_meals = suggested_meals[:meal_count]
+        meal_source = "recipe_cache+" + meal_source if cached_suggestions else meal_source
     weekly_meals = {f"meal_{index + 1}": meal["name"] for index, meal in enumerate(suggested_meals)}
     steps.append({
         "tool": "generate_weekly_meals",
@@ -151,6 +180,7 @@ def build_week_plan(
             dietary=dietary_instruction,
             force_refresh=False,
             gemini_allowed=gemini_allowed,
+            cache_write_enabled=False,
         )
         full_shopping_list = _normalize_items(ai_result.get("shopping_list", []))
         print(f"[plan-my-week] raw shopping list built: {len(full_shopping_list)} items")
@@ -236,6 +266,7 @@ def build_week_plan(
         "nutrition_report": ai_result.get("nutrition_report", {}) or {},
         "weekly_meals": weekly_meals,
         "substitutions": ai_result.get("substitutions", {}) or {},
+        "meal_ingredients": ai_result.get("meal_ingredients", {}) or {},
         "user_location": user_location,
         "steps": steps,
         "requires_approval": True,

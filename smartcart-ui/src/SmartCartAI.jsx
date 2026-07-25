@@ -1093,8 +1093,7 @@ export default function SmartCartAI() {
   const handleSignOut = () => signOut(auth).catch(console.error);
 
   // ── Home page state ───────────────────────────────────────────────────────
-  const [mode,         setMode]         = useState("meal");
-  const [planType,     setPlanType]     = useState("single");
+  const [mode,         setMode]         = useState("aiPlanner");
   const [dish,         setDish]         = useState("");
   const [weeklyMeals,  setWeeklyMeals]  = useState({});
   const [manualText,   setManualText]   = useState("");
@@ -1205,12 +1204,16 @@ export default function SmartCartAI() {
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
   const handleGenerate = async () => {
+    if (mode === "aiPlanner") {
+      await handlePlanMyWeek();
+      return;
+    }
     setError(null); setData(null); setCartOpt(null); setCartOptError(null); setLoading(true);
     const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
     if (mode !== "list") {
-      if (planType==="single"&&dish.trim()) weekly = { meal_1:dish.trim() };
+      if (mode === "meal" && dish.trim()) weekly = { meal_1:dish.trim() };
       else weekly = Object.fromEntries(Object.entries(weeklyMeals).filter(([,v])=>v.trim()));
     }
     if (!Object.keys(weekly).length&&!manualItems.length) {
@@ -1275,7 +1278,13 @@ export default function SmartCartAI() {
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ budget: 100 }),
+        body: JSON.stringify({
+          budget: 100,
+          dietary_instruction: dietary,
+          meal_count: 5,
+          ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
+          ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Plan My Week failed");
@@ -1299,6 +1308,9 @@ export default function SmartCartAI() {
         body: JSON.stringify({
           suggested_meals: weekPlan.suggested_meals,
           combined_shopping_list: weekPlan.combined_shopping_list,
+          meal_ingredients: weekPlan.meal_ingredients,
+          nutrition_report: weekPlan.nutrition_report,
+          dietary_instruction: dietary,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -1439,11 +1451,13 @@ export default function SmartCartAI() {
             <Card className="fu" style={{ marginBottom:"2rem" }}>
               <SectionHead label="Plan Your Groceries" sub="AI builds your optimized shopping plan" />
               <div style={{ display:"flex", gap:8, marginBottom:"1.5rem", flexWrap:"wrap" }}>
+                <ModeBtn active={mode==="aiPlanner"} onClick={()=>setMode("aiPlanner")}>🤖 AI Planner</ModeBtn>
                 <ModeBtn active={mode==="meal"}   onClick={()=>setMode("meal")}>🍽️ Single Meal</ModeBtn>
                 <ModeBtn active={mode==="weekly"} onClick={()=>setMode("weekly")}>📅 Weekly Plan</ModeBtn>
                 <ModeBtn active={mode==="list"}   onClick={()=>setMode("list")}>🛍️ Shopping List</ModeBtn>
                 <ModeBtn active={mode==="both"}   onClick={()=>setMode("both")}>🍽️ + 🛍️ Both</ModeBtn>
               </div>
+              {mode==="aiPlanner" && <div style={{ marginBottom:"1.25rem", padding:"12px 14px", border:`1px solid ${T.blue}33`, borderRadius:6, background:T.blueLight, color:T.blue, fontSize:13 }}>Plan My Week suggests 5 meals from your saved recipe cache and pantry first. Nothing is saved until you approve the plan.</div>}
               {mode==="meal" && <div style={{ marginBottom:"1.25rem" }}><Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/></div>}
               {mode==="weekly" && (
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginBottom:"1.25rem" }}>
@@ -1463,7 +1477,7 @@ export default function SmartCartAI() {
                 <Select label="Dietary Preference" value={dietary} onChange={e=>setDietary(e.target.value)} options={DIETS}/>
               </div>
               <button onClick={handleGenerate} disabled={loading} style={{ width:"100%", padding:"14px", background:loading?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:14, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", cursor:loading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", transition:"background 0.15s", opacity:loading?0.7:1 }}>
-                {loading?"Generating Plan…":"✦ Generate Smart Plan"}
+                {loading||weekPlanLoading?"Generating Plan…":"✦ Generate Smart Plan"}
               </button>
               {error && <div style={{ marginTop:"1rem", padding:"12px 16px", borderRadius:6, background:T.redLight, border:"1px solid #f5c6c3", color:T.red, fontSize:13 }}>⚠ {error}</div>}
             </Card>
