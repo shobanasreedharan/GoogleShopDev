@@ -139,6 +139,7 @@ function TabBtn({ active, onClick, children }) {
 
 const DAYS  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const DIETS = ["None","Vegetarian","Vegan","Keto","High Protein","Low Carb"];
+const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner"];
 const TABS  = [
   { id:"list",      label:"Shopping List" },
   { id:"stores",    label:"Store Prices"  },
@@ -1095,6 +1096,7 @@ export default function SmartCartAI() {
   // ── Home page state ───────────────────────────────────────────────────────
   const [mode,         setMode]         = useState("aiPlanner");
   const [dish,         setDish]         = useState("");
+  const [mealType,     setMealType]     = useState("Dinner");
   const [weeklyMeals,  setWeeklyMeals]  = useState({});
   const [manualText,   setManualText]   = useState("");
   const [pantryText,   setPantryText]   = useState("");
@@ -1212,7 +1214,7 @@ export default function SmartCartAI() {
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
     if (mode !== "list") {
-      if (mode === "meal" && dish.trim()) weekly = { meal_1:dish.trim() };
+      if (mode === "meal" && dish.trim()) weekly = { [mealType]:dish.trim() };
       else weekly = Object.fromEntries(Object.entries(weeklyMeals).filter(([,v])=>v.trim()));
     }
     if (!Object.keys(weekly).length&&!manualItems.length) {
@@ -1492,10 +1494,25 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                 <ModeBtn active={mode==="both"}   onClick={()=>setMode("both")}>🍽️ + 🛍️ Both</ModeBtn>
               </div>
               {mode==="aiPlanner" && <div style={{ marginBottom:"1.25rem", padding:"12px 14px", border:`1px solid ${T.blue}33`, borderRadius:6, background:T.blueLight, color:T.blue, fontSize:13 }}>AI Planner builds a 7-day plan with breakfast, lunch, and dinner using your saved recipe cache and pantry first. Nothing is saved until you generate the smart plan.</div>}
-              {mode==="meal" && <div style={{ marginBottom:"1.25rem" }}><Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/></div>}
+              {mode==="meal" && (
+                <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:"1rem", marginBottom:"1.25rem" }}>
+                  <Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/>
+                  <Select label="Meal type" value={mealType} onChange={e=>setMealType(e.target.value)} options={MEAL_TYPES}/>
+                </div>
+              )}
               {mode==="weekly" && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginBottom:"1.25rem" }}>
-                  {DAYS.map(day=><Input key={day} label={day} value={weeklyMeals[day]??""} onChange={e=>setWeeklyMeals(p=>({...p,[day]:e.target.value}))} placeholder="Enter meal..."/>)}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:10, marginBottom:"1.25rem" }}>
+                  {DAYS.map(day=>(
+                    <div key={day} style={{ padding:"12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                      <div style={{ fontSize:12, fontWeight:900, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:8 }}>{day}</div>
+                      <div style={{ display:"grid", gap:8 }}>
+                        {MEAL_TYPES.map(type => {
+                          const key = `${day} ${type}`;
+                          return <Input key={key} label={type} value={weeklyMeals[key]??""} onChange={e=>setWeeklyMeals(p=>({...p,[key]:e.target.value}))} placeholder={`Enter ${type.toLowerCase()}...`}/>;
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
               {mode==="both" && (

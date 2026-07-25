@@ -30,6 +30,14 @@ def _cache_key(meal: str, dietary: str) -> str:
     return build_recipe_cache_key(meal, dietary)
 
 
+def _meal_type_from_slot(slot: str) -> str:
+    normalized = " ".join((slot or "").strip().lower().split())
+    for meal_type in ("breakfast", "lunch", "dinner"):
+        if meal_type in normalized.split():
+            return meal_type
+    return normalized if normalized in {"breakfast", "lunch", "dinner"} else ""
+
+
 def _build_single_meal_prompt(weekly_meals: dict, dietary: str, manual_items: list) -> str:
     return f"""
 You are a world-class grocery planning AI.
@@ -209,7 +217,8 @@ def run_unified_ai(
 
     # ─── SINGLE MEAL ─────────────────────────────────────────────────────────
     if is_single_meal:
-        meal = list(weekly_meals.values())[0]
+        meal_slot, meal = next(iter(weekly_meals.items()))
+        meal_type = _meal_type_from_slot(meal_slot)
         key  = _cache_key(meal, dietary)
 
         # Cache check
@@ -267,6 +276,7 @@ def run_unified_ai(
                     nutrition=result["nutrition_report"],
                     substitutions=result.get("substitutions", {}),
                     instructions=instructions,
+                    meal_type=meal_type,
                 )
                 print(f"[unified_ai] Cached: '{meal}' with {len(instructions)} instructions (user={user_id})")
 
@@ -350,6 +360,7 @@ def run_unified_ai(
                             nutrition=_format_response(parsed)["nutrition_report"],
                             substitutions=substitutions,
                             instructions=instructions,
+                            meal_type=_meal_type_from_slot(day),
                         )
                         print(f"[unified_ai] Cached: '{meal}' with {len(instructions)} instructions (user={user_id})")
 
