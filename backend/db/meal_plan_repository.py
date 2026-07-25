@@ -48,3 +48,38 @@ def save_meal_plan(
     )
     doc_ref.set(document, merge=True)
     return document
+
+
+def list_meal_plan_recipes(user_id: str) -> list:
+    """Return unique meal names saved under users/{uid}/meal_plans."""
+    seen = set()
+    meals = []
+    docs = (
+        db.collection("users")
+        .document(user_id)
+        .collection("meal_plans")
+        .stream()
+    )
+    for doc in docs:
+        data = doc.to_dict() or {}
+        for meal in (data.get("weekly_meals") or {}).values():
+            normalized = " ".join(str(meal).strip().split())
+            key = normalized.lower()
+            if normalized and key not in seen:
+                seen.add(key)
+                meals.append(normalized)
+    return meals
+
+
+def save_generated_meal_recipe(user_id: str, day: str, meal: str):
+    """Save one newly generated meal as a reusable meal_plan recipe."""
+    normalized = " ".join(str(meal).strip().split())
+    if not normalized:
+        return None
+    return save_meal_plan(
+        user_id=user_id,
+        weekly_meals={day: normalized},
+        shopping_list=[],
+        budget_summary={},
+        nutrition_report={},
+    )
