@@ -134,6 +134,15 @@ RULES: Each meal key must match the meal name exactly as given. Follow dietary r
 """
 
 
+MULTI_MEAL_BATCH_SIZE = 5
+
+
+def _batch_items(items: dict[str, str], size: int = MULTI_MEAL_BATCH_SIZE):
+    entries = list(items.items())
+    for index in range(0, len(entries), size):
+        yield dict(entries[index:index + size])
+
+
 def _format_response(parsed: dict, source: str = "gemini") -> Dict[str, Any]:
     nr = parsed.get("nutrition_report", {})
     if "nutrition_scores" in nr:
@@ -174,6 +183,7 @@ def run_unified_ai(
     dietary: str = "Vegetarian only",
     force_refresh: bool = False,
     gemini_allowed: bool = True,
+    cache_write_enabled: bool = True,
 ) -> Dict[str, Any]:
 
     manual_items = manual_items or []
@@ -248,7 +258,7 @@ def run_unified_ai(
                 raise ValueError("single-meal generation returned an empty shopping list")
             instructions  = parsed.get("instructions", [])
 
-            if shopping_list:
+            if shopping_list and cache_write_enabled:
                 save_recipe_cache(
                     user_id=user_id,
                     meal=key,
@@ -292,53 +302,62 @@ def run_unified_ai(
     gemini_called                     = False
 
     if uncached_meals and gemini_allowed:
-        prompt = _build_multi_meal_prompt(uncached_meals, dietary)
-        try:
-            text = generate_text(prompt).strip()
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.lower().startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-            parsed = json.loads(text)
+        batches = list(_batch_items(uncached_meals))
+        print(f"[unified_ai] Processing {len(uncached_meals)} uncached meals in {len(batches)} batch(es) of up to {MULTI_MEAL_BATCH_SIZE}")
+        for batch_index, batch_meals in enumerate(batches, 1):
+            prompt = _build_multi_meal_prompt(batch_meals, dietary)
+            try:
+                print(f"[unified_ai] Gemini batch {batch_index}/{len(batches)} starting with {len(batch_meals)} meal(s)")
+                text = generate_text(prompt).strip()
+                if "```" in text:
+                    text = text.split("```")[1]
+                    if text.lower().startswith("json"):
+                        text = text[4:]
+                    text = text.strip()
+                parsed = json.loads(text)
 
-            meals_data       = parsed.get("meals", {})
-            nutrition_report = parsed.get("nutrition_report", {})
-            substitutions    = parsed.get("substitutions", {})
+                meals_data = parsed.get("meals", {})
+                if not nutrition_report:
+                    nutrition_report = parsed.get("nutrition_report", {})
+                substitutions.update(parsed.get("substitutions", {}) or {})
 
-            print(f"[unified_ai] Gemini returned meal keys: {list(meals_data.keys())}")
-            print(f"[unified_ai] Expected meal names: {list(uncached_meals.values())}")
+                print(f"[unified_ai] Gemini batch {batch_index}/{len(batches)} returned meal keys: {list(meals_data.keys())}")
+                print(f"[unified_ai] Gemini batch {batch_index}/{len(batches)} expected meal names: {list(batch_meals.values())}")
 
-            for day, meal in uncached_meals.items():
-                meal_data = meals_data.get(meal) or next(
-                    (v for k, v in meals_data.items() if k.lower() == meal.lower()), {}
-                )
-                if isinstance(meal_data, list):
-                    ingredients  = meal_data
-                    instructions = []
-                else:
-                    ingredients  = [i.lower() for i in meal_data.get("ingredients", [])]
-                    instructions = meal_data.get("instructions", [])
-
-                gemini_meals[meal] = ingredients
-
-                if ingredients:
-                    key = _cache_key(meal, dietary)
-                    save_recipe_cache(
-                        user_id=user_id,
-                        meal=key,
-                        ingredients=ingredients,
-                        source="gemini",
-                        nutrition=_format_response(parsed)["nutrition_report"],
-                        substitutions=substitutions,
-                        instructions=instructions,
+                for day, meal in batch_meals.items():
+                    meal_data = meals_data.get(meal) or next(
+                        (v for k, v in meals_data.items() if k.lower() == meal.lower()), {}
                     )
-                    print(f"[unified_ai] Cached: '{meal}' with {len(instructions)} instructions (user={user_id})")
+                    if isinstance(meal_data, list):
+                        ingredients  = [str(i).lower().strip() for i in meal_data if str(i).strip()]
+                        instructions = []
+                    else:
+                        ingredients  = [str(i).lower().strip() for i in meal_data.get("ingredients", []) if str(i).strip()]
+                        instructions = meal_data.get("instructions", [])
 
-            gemini_called = True
+                    if ingredients:
+                        gemini_meals[meal] = ingredients
+                    else:
+                        print(f"[unified_ai] Gemini batch {batch_index}/{len(batches)} missing ingredients for '{meal}'")
 
-        except Exception as e:
-            print(f"[unified_ai] Gemini failed (multi): {e}")
+                    if ingredients and cache_write_enabled:
+                        key = _cache_key(meal, dietary)
+                        save_recipe_cache(
+                            user_id=user_id,
+                            meal=key,
+                            ingredients=ingredients,
+                            source="gemini",
+                            nutrition=_format_response(parsed)["nutrition_report"],
+                            substitutions=substitutions,
+                            instructions=instructions,
+                        )
+                        print(f"[unified_ai] Cached: '{meal}' with {len(instructions)} instructions (user={user_id})")
+
+                gemini_called = True
+
+            except Exception as e:
+                print(f"[unified_ai] Gemini failed (multi) batch {batch_index}/{len(batches)}: {e}")
+                continue
 
     elif uncached_meals and not gemini_allowed:
         print(f"[unified_ai] Gemini limit reached — skipping {len(uncached_meals)} uncached meals")
@@ -348,6 +367,7 @@ def run_unified_ai(
     combined_shopping_list = list(dict.fromkeys(
         item for ingredients in all_meals.values() for item in ingredients
     ))
+    print(f"[unified_ai] Final combined shopping list length after batching: {len(combined_shopping_list)}")
 
     if not nutrition_report and weekly_meals:
         first_meal   = list(weekly_meals.values())[0]
@@ -361,7 +381,11 @@ def run_unified_ai(
         "substitutions":    substitutions,
     }, source="cache+gemini" if cached_meals else "gemini")
 
+    result["meal_ingredients"] = all_meals
     result["_gemini_called"] = gemini_called
+    if weekly_meals and not combined_shopping_list:
+        result["_error"] = "empty_multi_meal_shopping_list"
+        result["_error_message"] = "Multi-meal generation returned an empty shopping list"
     return result
 
 

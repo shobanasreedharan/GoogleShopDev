@@ -25,11 +25,10 @@ from backend.agent.chat_tool_router import (
 )
 from backend.agent.cart_optimization_agent import build_cart_optimization_plan
 from backend.agent.week_plan_agent import build_week_plan
-from backend.db.meal_plan_repository import save_meal_plan
 from backend.core.pipeline import run_grocery_pipeline
 from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
-from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
+from backend.db.recipe_cache_repository import build_recipe_cache_key, list_recipes, save_recipe_cache, user_save_recipe
 from backend.db.rate_limit_repository import (
     check_generate_limit,
     check_gemini_limit,
@@ -166,7 +165,7 @@ class CartOptimizationRequest(BaseModel):
 class PlanMyWeekRequest(BaseModel):
     budget: float = 100
     dietary_instruction: str = "Vegetarian only"
-    meal_count: int = 5
+    meal_count: int = 21
     user_lat: float | None = None
     user_lng: float | None = None
     manual_city: str | None = None
@@ -193,6 +192,8 @@ class PlanMyWeekApproveRequest(BaseModel):
     shopping_list: List[str | ShoppingListItem] | Dict[str, str | float | int | ShoppingListItem] | None = None
     budget_summary: Dict[str, object] = {}
     nutrition_report: Dict[str, object] = {}
+    meal_ingredients: Dict[str, List[str]] = {}
+    dietary_instruction: str = "Vegetarian only"
 
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
@@ -384,8 +385,8 @@ def plan_my_week(request: PlanMyWeekRequest, user: dict = Depends(get_current_us
     uid = user["uid"]
     print(f"[plan-my-week] request received for user={uid}")
     try:
-        if request.meal_count < 1 or request.meal_count > 7:
-            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 7")
+        if request.meal_count < 1 or request.meal_count > 21:
+            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 21")
 
         gemini_check = check_gemini_limit(uid)
         result = build_week_plan(
@@ -429,13 +430,19 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
         if not shopping_list:
             raise HTTPException(status_code=400, detail="shopping_list or combined_shopping_list is required")
 
-        saved = save_meal_plan(
-            user_id=uid,
-            weekly_meals=weekly_meals,
-            shopping_list=shopping_list,
-            budget_summary=request.budget_summary,
-            nutrition_report=request.nutrition_report,
-        )
+        saved = []
+        meal_ingredients = request.meal_ingredients or {}
+        for meal_key, description in weekly_meals.items():
+            meal_name = meal_key if description and description != meal_key else description or meal_key
+            ingredients = meal_ingredients.get(meal_name) or meal_ingredients.get(meal_key) or shopping_list
+            cache_key = build_recipe_cache_key(meal_name, request.dietary_instruction)
+            saved.append(save_recipe_cache(
+                user_id=uid,
+                meal=cache_key,
+                ingredients=ingredients,
+                source="approved_week_plan",
+                nutrition=request.nutrition_report,
+            ))
         return {"success": True, "saved": saved}
     except HTTPException:
         raise
