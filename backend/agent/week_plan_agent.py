@@ -83,6 +83,13 @@ def _parse_suggested_meals(text: str, pantry_items: list[str], count: int) -> li
             if name:
                 slot_day, slot_type = _meal_slot(len(meals))
                 meals.append({"name": name, "day": day or slot_day, "meal_type": meal_type or slot_type, "reason": reason})
+            elif isinstance(raw, dict):
+                name = str(raw.get("name") or raw.get("meal") or "").strip()
+                reason = str(raw.get("reason") or raw.get("why") or "Suggested for the week.").strip()
+            else:
+                continue
+            if name:
+                meals.append({"name": name, "reason": reason})
             if len(meals) >= count:
                 break
         return meals or _fallback_weekly_meals(pantry_items, count)
