@@ -174,6 +174,7 @@ def run_unified_ai(
     dietary: str = "Vegetarian only",
     force_refresh: bool = False,
     gemini_allowed: bool = True,
+    cache_write_enabled: bool = True,
 ) -> Dict[str, Any]:
 
     manual_items = manual_items or []
@@ -248,7 +249,7 @@ def run_unified_ai(
                 raise ValueError("single-meal generation returned an empty shopping list")
             instructions  = parsed.get("instructions", [])
 
-            if shopping_list:
+            if shopping_list and cache_write_enabled:
                 save_recipe_cache(
                     user_id=user_id,
                     meal=key,
@@ -322,7 +323,7 @@ def run_unified_ai(
 
                 gemini_meals[meal] = ingredients
 
-                if ingredients:
+                if ingredients and cache_write_enabled:
                     key = _cache_key(meal, dietary)
                     save_recipe_cache(
                         user_id=user_id,
@@ -361,6 +362,7 @@ def run_unified_ai(
         "substitutions":    substitutions,
     }, source="cache+gemini" if cached_meals else "gemini")
 
+    result["meal_ingredients"] = all_meals
     result["_gemini_called"] = gemini_called
     return result
 
