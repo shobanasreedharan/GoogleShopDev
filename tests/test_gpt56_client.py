@@ -25,6 +25,17 @@ class GPT56ClientTests(unittest.TestCase):
         self.assertEqual(text, "Gemini answer")
         self.assertEqual(model_used, "gemini")
 
+    def test_custom_primary_generator_is_supported(self):
+        text, model_used = gpt56_client.generate_primary_or_fallback(
+            "prompt",
+            lambda _: "Fallback answer",
+            log_prefix="test",
+            primary=lambda _: "Custom primary answer",
+        )
+
+        self.assertEqual(text, "Custom primary answer")
+        self.assertEqual(model_used, "primary")
+
     def test_openai_response_text_is_validated(self):
         fake_openai = types.ModuleType("openai")
 

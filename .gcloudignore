@@ -1,0 +1,8 @@
+node_modules/
+smartcart-ui/node_modules/
+smartcart-ui/build/
+.git/
+*.pyc
+__pycache__/
+.env
+smartcart-mcp-server/node_modules/

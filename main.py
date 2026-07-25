@@ -1,24 +1,25 @@
-from dotenv import load_dotenv
-load_dotenv()
+"""Compatibility entry point for deployments that import main:app.
 
-import os
-import json
-import httpx
-import time
-import traceback
-from contextlib import asynccontextmanager
-from typing import List, Dict
+The canonical FastAPI application lives in backend.api.main.
+"""
 
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from backend.api.main import app
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
 from backend.agent.agent import create_agent
+from backend.agent.chat_tool_router import (
+    build_chat_response_payload,
+    build_tool_context,
+    route_chat_tools,
+)
+from backend.agent.cart_optimization_agent import build_cart_optimization_plan
+from backend.agent.week_plan_agent import build_week_plan
+from backend.db.meal_plan_repository import save_meal_plan
 from backend.core.pipeline import run_grocery_pipeline
+from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
 from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
 from backend.db.rate_limit_repository import (
@@ -29,6 +30,7 @@ from backend.db.rate_limit_repository import (
 )
 import base64
 from backend.db.store_prices_repository import save_store_prices
+from backend.db.pantry_repository import get_pantry, save_pantry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -116,7 +118,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://buildweek-smartcart.web.app",
+        "https://qwen-smartcart.web.app",
+        "https://smartcart-ai-dev.web.app",
+        "http://localhost:3000",
+        ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -135,11 +141,35 @@ class DishRequest(BaseModel):
     selected_substitutions: Dict[str, str] = {}
     user_lat: float | None = None
     user_lng: float | None = None
+    manual_city: str | None = None
+    manual_state: str | None = None
+    manual_postal_code: str | None = None
     force_refresh: bool = False
 
 class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
+
+class CartOptimizationRequest(BaseModel):
+    shopping_list: List[str]
+    substitutions: Dict[str, object] = {}
+    budget: float = 100
+
+class PlanMyWeekRequest(BaseModel):
+    budget: float = 100
+    dietary_instruction: str = "Vegetarian only"
+    meal_count: int = 5
+    user_lat: float | None = None
+    user_lng: float | None = None
+    manual_city: str | None = None
+    manual_state: str | None = None
+    manual_postal_code: str | None = None
+
+class PlanMyWeekApproveRequest(BaseModel):
+    weekly_meals: Dict[str, str]
+    shopping_list: List[str]
+    budget_summary: Dict[str, object] = {}
+    nutrition_report: Dict[str, object] = {}
 
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
@@ -226,6 +256,9 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
             selected_substitutions=request.selected_substitutions,
             user_lat=request.user_lat,
             user_lng=request.user_lng,
+            manual_city=request.manual_city,
+            manual_state=request.manual_state,
+            manual_postal_code=request.manual_postal_code,
             force_refresh=request.force_refresh,
             gemini_allowed=gemini_check["allowed"],
         )
@@ -251,6 +284,86 @@ def generate(request: DishRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/plan-my-week")
+def plan_my_week(request: PlanMyWeekRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[plan-my-week] request received for user={uid}")
+    try:
+        if request.meal_count < 1 or request.meal_count > 7:
+            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 7")
+
+        gemini_check = check_gemini_limit(uid)
+        result = build_week_plan(
+            user_id=uid,
+            budget=request.budget,
+            dietary_instruction=request.dietary_instruction,
+            user_lat=request.user_lat,
+            user_lng=request.user_lng,
+            manual_city=request.manual_city,
+            manual_state=request.manual_state,
+            manual_postal_code=request.manual_postal_code,
+            meal_count=request.meal_count,
+            gemini_allowed=gemini_check["allowed"],
+        )
+        if result.get("_gemini_called"):
+            increment_usage(uid, "gemini")
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        print(f"[plan-my-week] bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[plan-my-week] failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/plan-my-week/approve")
+def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[plan-my-week] approve received for user={uid}")
+    try:
+        if not request.shopping_list:
+            raise HTTPException(status_code=400, detail="shopping_list is required")
+        saved = save_meal_plan(
+            user_id=uid,
+            weekly_meals=request.weekly_meals,
+            shopping_list=request.shopping_list,
+            budget_summary=request.budget_summary,
+            nutrition_report=request.nutrition_report,
+        )
+        return {"success": True, "saved": saved}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[plan-my-week] approve failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/optimize-cart-agent")
+async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
+    uid = user["uid"]
+    print(f"[optimize-cart-agent] request received for user={uid}")
+    try:
+        return build_cart_optimization_plan(
+            user_id=uid,
+            shopping_list=request.shopping_list,
+            substitutions=request.substitutions,
+            budget=request.budget,
+        )
+    except ValueError as e:
+        print(f"[optimize-cart-agent] bad request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[optimize-cart-agent] failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
@@ -261,59 +374,96 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         return {
             "response": f"⚠ {chat_check['message']}",
             "session_id": req.session_id,
+            "steps": [],
+            "cards": {"shopping_list": [], "stores": [], "recipes": []},
+            "usage": {"used": chat_check["used"], "limit": chat_check["limit"]},
             "rate_limited": True,
         }
 
-    pantry_data = await call_mcp_tool("get_pantry_items", {"user_id": uid})
+    tool_results = route_chat_tools(req.message, uid)
+    tool_context = build_tool_context(tool_results)
 
     prompt = f"""You are SmartCart, an AI grocery and meal planning assistant.
 
-The user's pantry contains: {pantry_data}
+Backend tool results, if any:
+{tool_context}
 
 User question: {req.message}
 
-Answer directly and concisely using the pantry data above."""
+Answer directly and concisely. Ground your answer in the backend tool results when tools were used.
+If no backend tools matched this message, answer normally without claiming you checked pantry, recipes, stores, or prices."""
 
-    from vertexai.generative_models import GenerativeModel
-    model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
-    response = model.generate_content(prompt)
+    # Gemini is primary for this build — OPENAI_API_KEY is intentionally unset
+    # so generate_primary_or_fallback() always routes to Gemini via fast-fail.
+    def generate_with_gemini(chat_prompt: str) -> str:
+        from vertexai.generative_models import GenerativeModel
+
+        model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+        return model.generate_content(chat_prompt).text
+
+    response_text, _model_used = generate_primary_or_fallback(
+        prompt,
+        generate_with_gemini,
+        log_prefix="chat",
+    )
 
     increment_usage(uid, "chat")
 
-    return {
-        "response": response.text,
-        "session_id": req.session_id,
-        "usage": {"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
-    }
+    return build_chat_response_payload(
+        response_text=response_text,
+        session_id=req.session_id,
+        tool_results=tool_results,
+        usage={"used": chat_check["used"] + 1, "limit": chat_check["limit"]},
+    )
 
 
 # /debug/pantry/{user_id} removed — it let anyone query any user's pantry by
 # guessing a uid, with no auth check. Replaced with an auth-protected version
 # that only returns the caller's own pantry.
+def _normalize_pantry_items(raw_items) -> list[str]:
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=400, detail="items must be a list")
+
+    normalized = []
+    seen = set()
+    for item in raw_items:
+        if isinstance(item, str):
+            value = item.strip().lower()
+        elif isinstance(item, dict):
+            value = str(item.get("name") or item.get("item") or "").strip().lower()
+        else:
+            continue
+        if value and value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
 @app.get("/debug/pantry/me")
 async def debug_pantry_me(user: dict = Depends(get_current_user)):
+    uid = user["uid"]
     try:
-        result = await call_mcp_tool("get_pantry_items", {"user_id": user["uid"]})
-        return {"result": result, "success": True}
+        items = get_pantry(uid)
+        return {"result": {"user_id": uid, "items": items, "count": len(items)}, "success": True}
     except Exception as e:
-        return {"error": str(e), "success": False}
+        print(f"[debug_pantry_me] failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/pantry")
 async def update_pantry(body: dict, user: dict = Depends(get_current_user)):
     uid = user["uid"]  # verified, not from URL
+    items = _normalize_pantry_items(body.get("items", []))
+    print(f"[pantry] updating {uid}: {items}")
     try:
-        items = body.get("items", [])
-        print(f"[pantry] updating {uid}: {items}")
-        result = await call_mcp_tool("update_pantry_items", {
-            "user_id": uid,
-            "items": items
-        })
+        result = save_pantry(uid, items)
         print(f"[update_pantry] result: {result}")
         return {"result": result, "success": True}
     except Exception as e:
         print(f"[update_pantry] failed: {e}")
-        return {"error": str(e), "success": False}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/debug/tools")
@@ -364,24 +514,21 @@ async def save_recipe(body: RecipeSaveRequest, user: dict = Depends(get_current_
 @app.post("/receipt/upload")
 async def upload_receipt(body: ReceiptUploadRequest, user: dict = Depends(get_current_user)):
     """
-    Upload a grocery receipt photo or PDF.
-    Gemini Vision extracts store name, items and prices.
-    Saved to store_prices collection for real price lookups.
+    Upload a grocery receipt photo or PDF, parse item prices, and save them to
+    shared city-level Firestore price docs.
     """
-    import base64
-    from backend.db.store_prices_repository import save_store_prices
     from vertexai.generative_models import GenerativeModel, Part as VPart
 
     uid = user["uid"]
+    print(f"[receipt/upload] received upload user={uid} media_type={body.media_type} city={body.city!r} state={body.state!r}")
 
     try:
-        # ── Decode base64 ─────────────────────────────────────────────
         try:
             image_bytes = base64.b64decode(body.image_base64)
         except Exception:
+            print("[receipt/upload] invalid base64 payload")
             raise HTTPException(status_code=400, detail="Invalid base64 image data")
 
-        # ── Build Gemini Vision prompt ────────────────────────────────
         prompt = """You are a grocery receipt parser.
 Extract ALL items and their prices from this receipt.
 Also extract the store name if visible.
@@ -403,17 +550,15 @@ RULES:
 - if you cannot read a price clearly, skip that item
 - No markdown, no explanation, valid JSON only"""
 
-        # ── Call Gemini Vision ────────────────────────────────────────
         import vertexai
         vertexai.init(project=os.getenv("GOOGLE_PROJECT_ID"), location="us-central1")
         model = GenerativeModel(os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
 
         media_type = body.media_type
-        if media_type == "application/pdf":
-            # Gemini handles PDF as document
-            part = VPart.from_data(data=image_bytes, mime_type="application/pdf")
-        else:
-            part = VPart.from_data(data=image_bytes, mime_type=media_type)
+        part = VPart.from_data(
+            data=image_bytes,
+            mime_type="application/pdf" if media_type == "application/pdf" else media_type,
+        )
 
         response = model.generate_content([part, prompt])
         text = response.text.strip()
@@ -423,10 +568,12 @@ RULES:
                 text = text[4:]
             text = text.strip()
 
-        parsed = json.loads(text)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"[receipt/upload] parse failed: {e}; raw={text[:500]}")
+            raise HTTPException(status_code=422, detail=f"Could not parse receipt. Try a clearer photo. ({e})")
 
-        # ── Resolve store details ─────────────────────────────────────
-        # User-provided values override Gemini-extracted values
         store_name = body.store_name.strip() or parsed.get("store_name", "").strip() or "Unknown Store"
         city = body.city.strip()
         state = body.state.strip()
@@ -434,19 +581,16 @@ RULES:
         address = body.address.strip()
         receipt_date = body.receipt_date.strip() or parsed.get("receipt_date", "")
         items = parsed.get("items", {})
+        print(f"[receipt/upload] parsed store={store_name!r} item_count={len(items) if isinstance(items, dict) else 'invalid'} preview={dict(list(items.items())[:3]) if isinstance(items, dict) else items}")
 
-        if not items:
-            return {"success": False, "error": "No items found in receipt. Please try a clearer photo."}
+        if not isinstance(items, dict) or not items:
+            raise HTTPException(status_code=422, detail="No items found in receipt. Please try a clearer photo.")
 
         if not city or not state:
-            return {
-                "success": False,
-                "error": "Could not determine store location. Please enter city and state.",
-                "store_name": store_name,
-                "items": items,
-            }
+            print(f"[receipt/upload] missing city/state city={city!r} state={state!r}")
+            raise HTTPException(status_code=400, detail="Could not determine store location. Please enter city and state.")
 
-        # ── Save to Firestore ─────────────────────────────────────────
+        print(f"[receipt/upload] saving receipt prices city={city!r} state={state!r} country={country!r}")
         result = save_store_prices(
             uploaded_by=uid,
             store_name=store_name,
@@ -459,24 +603,25 @@ RULES:
             lat=body.lat,
             lng=body.lng,
         )
+        print(f"[receipt/upload] Firestore write result: {result}")
 
         return {
             "success": True,
             "store_name": store_name,
-            "city": city,
-            "state": state,
+            "city": result["city"],
+            "state": result["state"],
             "item_count": result["item_count"],
-            "items_preview": dict(list(items.items())[:5]),  # first 5 for UI preview
+            "items_preview": result["items_preview"],
             "store_id": result["store_id"],
+            "city_key": result["city_key"],
+            "sample_path": result["sample_path"],
         }
 
     except HTTPException:
         raise
-    except json.JSONDecodeError as e:
-        return {"success": False, "error": f"Could not parse receipt. Try a clearer photo. ({e})"}
     except Exception as e:
         traceback.print_exc()
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/receipt/stores")
@@ -490,4 +635,5 @@ async def get_nearby_stores_with_prices(
         stores = get_stores_in_city(city, state)
         return {"stores": stores, "count": len(stores), "success": True}
     except Exception as e:
-        return {"error": str(e), "success": False}
+        print(f"[receipt/stores] failed city={city!r} state={state!r}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
