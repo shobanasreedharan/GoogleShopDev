@@ -165,7 +165,7 @@ class CartOptimizationRequest(BaseModel):
 class PlanMyWeekRequest(BaseModel):
     budget: float = 100
     dietary_instruction: str = "Vegetarian only"
-    meal_count: int = 5
+    meal_count: int = 21
     user_lat: float | None = None
     user_lng: float | None = None
     manual_city: str | None = None
@@ -385,8 +385,8 @@ def plan_my_week(request: PlanMyWeekRequest, user: dict = Depends(get_current_us
     uid = user["uid"]
     print(f"[plan-my-week] request received for user={uid}")
     try:
-        if request.meal_count < 1 or request.meal_count > 7:
-            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 7")
+        if request.meal_count < 1 or request.meal_count > 21:
+            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 21")
 
         gemini_check = check_gemini_limit(uid)
         result = build_week_plan(
