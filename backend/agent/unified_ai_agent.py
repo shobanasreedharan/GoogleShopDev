@@ -400,6 +400,28 @@ def run_unified_ai(
     return result
 
 
+def _single_meal_fallback(meal: str, manual_items: list) -> Dict[str, Any]:
+    meal_words = [
+        word.strip().lower()
+        for word in str(meal or "").replace("/", " ").replace("-", " ").split()
+        if word.strip()
+    ]
+    base_items = meal_words or [str(meal or "meal").strip().lower()]
+    shopping_list = list(dict.fromkeys([
+        *base_items,
+        *(str(item).strip().lower() for item in (manual_items or []) if str(item).strip()),
+    ]))
+    result = _fallback(shopping_list)
+    result["instructions"] = [
+        f"Prepare {meal}"[:100],
+        "Cook until ready",
+        "Serve warm",
+    ]
+    result["_source"] = "single_meal_fallback"
+    result["_gemini_called"] = False
+    return result
+
+
 def _fallback(manual_items: list) -> Dict[str, Any]:
     return {
         "shopping_list": manual_items,
