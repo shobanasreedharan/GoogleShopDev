@@ -4,7 +4,6 @@ from typing import Any
 from backend.agent.cart_optimization_agent import _normalize_items, _remove_pantry_items
 from backend.agent.unified_ai_agent import generate_text, run_unified_ai
 from backend.optimization.budget_optimizer import weekly_budget_planner
-from backend.optimization.route_optimizer import optimize_route
 from backend.services.location import get_user_location
 from backend.services.store_finder import recommend_best_store
 from backend.utils.sanitizers import clean_stores
@@ -55,6 +54,14 @@ def _fallback_weekly_meals(pantry_items: list[str], count: int = 21) -> list[dic
             "reason": f"Works well with {pantry_hint}.",
         }
         for index in range(count)
+]
+
+
+def _fallback_weekly_meals(pantry_items: list[str], count: int = 5) -> list[dict[str, str]]:
+    pantry_hint = ", ".join(pantry_items[:3]) if pantry_items else "basic staples"
+    return [
+        {"name": meal, "reason": f"Works well with {pantry_hint}."}
+        for meal in DEFAULT_WEEKLY_MEALS[:count]
     ]
 
 
@@ -83,6 +90,13 @@ def _parse_suggested_meals(text: str, pantry_items: list[str], count: int) -> li
             if name:
                 slot_day, slot_type = _meal_slot(len(meals))
                 meals.append({"name": name, "day": day or slot_day, "meal_type": meal_type or slot_type, "reason": reason})
+            elif isinstance(raw, dict):
+                name = str(raw.get("name") or raw.get("meal") or "").strip()
+                reason = str(raw.get("reason") or raw.get("why") or "Suggested for the week.").strip()
+            else:
+                continue
+            if name:
+                meals.append({"name": name, "reason": reason})
             if len(meals) >= count:
                 break
         return meals or _fallback_weekly_meals(pantry_items, count)
