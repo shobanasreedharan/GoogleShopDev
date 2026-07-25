@@ -401,12 +401,57 @@ def run_unified_ai(
 
 
 def _single_meal_fallback(meal: str, manual_items: list) -> Dict[str, Any]:
-    meal_words = [
-        word.strip().lower()
-        for word in str(meal or "").replace("/", " ").replace("-", " ").split()
-        if word.strip()
-    ]
-    base_items = meal_words or [str(meal or "meal").strip().lower()]
+    normalized_meal = " ".join(str(meal or "").strip().lower().split())
+    known_recipe_ingredients = {
+        "sambar idli": [
+            "idli rice",
+            "urad dal",
+            "fenugreek seeds",
+            "salt",
+            "water",
+            "toor dal",
+            "onion",
+            "tomato",
+            "carrot",
+            "potato",
+            "drumstick pieces",
+            "green chilies",
+            "sambar powder",
+            "turmeric",
+            "tamarind",
+            "oil",
+        ],
+        "idli sambar": [
+            "idli rice",
+            "urad dal",
+            "fenugreek seeds",
+            "salt",
+            "water",
+            "toor dal",
+            "onion",
+            "tomato",
+            "carrot",
+            "potato",
+            "drumstick pieces",
+            "green chilies",
+            "sambar powder",
+            "turmeric",
+            "tamarind",
+            "oil",
+        ],
+    }
+    if normalized_meal in known_recipe_ingredients:
+        base_items = known_recipe_ingredients[normalized_meal]
+    elif "sambar" in normalized_meal and "idli" in normalized_meal:
+        base_items = known_recipe_ingredients["sambar idli"]
+    else:
+        meal_words = [
+            word.strip().lower()
+            for word in normalized_meal.replace("/", " ").replace("-", " ").split()
+            if word.strip()
+        ]
+        base_items = meal_words or [normalized_meal or "meal"]
+
     shopping_list = list(dict.fromkeys([
         *base_items,
         *(str(item).strip().lower() for item in (manual_items or []) if str(item).strip()),
