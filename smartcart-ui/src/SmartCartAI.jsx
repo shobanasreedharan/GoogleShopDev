@@ -1204,70 +1204,6 @@ export default function SmartCartAI() {
 
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
-  const weekPlanShoppingList = (plan) => (
-    Array.isArray(plan?.combined_shopping_list) ? plan.combined_shopping_list :
-    Array.isArray(plan?.shopping_list) ? plan.shopping_list :
-    []
-  );
-
-  const weekPlanToResultsData = (plan) => ({
-    ...plan,
-    success: true,
-    shopping_list: weekPlanShoppingList(plan),
-    recommended_stores: plan?.recommended_stores || [],
-    budget_summary: plan?.budget_summary || {},
-    nutrition_report: plan?.nutrition_report || {},
-    substitutions: plan?.substitutions || {},
-    user_location: plan?.user_location || {},
-  });
-
-  const priceForStoreItem = (store, item) => {
-    const target = String(item || "").toLowerCase();
-    const breakdown = store?.price_breakdown || {};
-    const direct = breakdown[item] || breakdown[target];
-    const matched = direct || Object.entries(breakdown).find(([name]) => String(name).toLowerCase() === target)?.[1];
-    const itemRow = matched || (store?.items || []).find(row => String(row?.item || "").toLowerCase() === target);
-    const price = typeof itemRow === "object" ? Number(itemRow?.price) : Number(itemRow);
-    if (!Number.isFinite(price)) return null;
-    return {
-      price,
-      currency: typeof itemRow === "object" ? (itemRow.currency || store?.currency || "USD") : (store?.currency || "USD"),
-    };
-  };
-
-  const weekPlanToCartOptFallback = (plan) => {
-    const shoppingList = weekPlanShoppingList(plan);
-    const stores = plan?.recommended_stores || [];
-    const storePlan = shoppingList.map(item => {
-      let best = null;
-      stores.forEach(store => {
-        const priced = priceForStoreItem(store, item);
-        if (!priced) return;
-        if (!best || priced.price < best.price) {
-          best = {
-            item,
-            store: store.store_name || store.name || "Store",
-            price: priced.price,
-            currency: priced.currency,
-          };
-        }
-      });
-      return best;
-    }).filter(Boolean);
-    const optimization = plan?.budget_summary?.optimization || {};
-    return {
-      success: true,
-      summary: `Plan saved to your profile. ${shoppingList.length} item(s) are ready to compare across nearby stores.`,
-      original_total: Number(plan?.original_total ?? optimization.original_cost ?? 0),
-      optimized_total: Number(plan?.optimized_total ?? optimization.optimized_cost ?? 0),
-      estimated_savings: Number(plan?.estimated_savings ?? optimization.money_saved ?? 0),
-      pantry_removed: plan?.pantry_items_used || [],
-      substitutions_applied: [],
-      store_plan: storePlan,
-      steps: plan?.steps || [],
-    };
-  };
-
   const handleGenerate = async () => {
     setError(null); setData(null); setCartOpt(null); setCartOptError(null); setLoading(true);
     const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
@@ -1322,7 +1258,7 @@ export default function SmartCartAI() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.success === false) {
-        throw new Error(apiErrorMessage(json, "Cart optimization failed"));
+        throw new Error(json?.detail || json?.error || "Cart optimization failed");
       }
       setCartOpt(json);
     } catch (e) {
@@ -1353,6 +1289,7 @@ export default function SmartCartAI() {
 
   const handleApproveWeekPlan = async () => {
     if (!weekPlan) return;
+    //console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
     setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
@@ -1367,37 +1304,6 @@ export default function SmartCartAI() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
       setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
-      const approvedPlanData = weekPlanToResultsData(weekPlan);
-      setData(approvedPlanData);
-      setCartOpt(weekPlanToCartOptFallback(weekPlan));
-      setCartOptError(null);
-      setActiveTab("list");
-      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
-
-      const shoppingList = weekPlanShoppingList(weekPlan);
-      if (shoppingList.length) {
-        setCartOptLoading(true);
-        try {
-          const optRes = await fetch(`${BASE_URL}/optimize-cart-agent`, {
-            method:"POST",
-            headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-            body: JSON.stringify({
-              shopping_list: shoppingList,
-              substitutions: weekPlan.substitutions || {},
-              budget: weekPlan?.budget_summary?.budget ?? 100,
-            }),
-          });
-          const optJson = await optRes.json().catch(() => ({}));
-          if (!optRes.ok || optJson?.success === false) {
-            throw new Error(apiErrorMessage(optJson, "Cart optimization failed"));
-          }
-          setCartOpt(optJson);
-        } catch (optError) {
-          setCartOptError(`Plan saved, but cart optimization details could not refresh: ${optError.message || "Cart optimization failed"}`);
-        } finally {
-          setCartOptLoading(false);
-        }
-      }
     } catch (e) {
       setWeekPlanError(e.message);
     }
