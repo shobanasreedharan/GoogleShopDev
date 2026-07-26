@@ -36,7 +36,7 @@ from backend.db.rate_limit_repository import (
 )
 import base64
 from backend.db.store_prices_repository import save_store_prices
-from backend.db.pantry_repository import get_pantry, save_pantry
+from backend.db.pantry_repository import add_items as add_pantry_items, get_pantry, save_pantry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -720,6 +720,10 @@ RULES:
         )
         print(f"[receipt/upload] Firestore write result: {result}")
 
+        receipt_pantry_items = [str(item).strip().lower() for item in items.keys() if str(item).strip()]
+        pantry_items = add_pantry_items(uid, receipt_pantry_items)
+        print(f"[receipt/upload] added {len(receipt_pantry_items)} receipt item(s) to pantry; pantry now has {len(pantry_items)} item(s)")
+
         return {
             "success": True,
             "store_name": store_name,
@@ -730,6 +734,8 @@ RULES:
             "store_id": result["store_id"],
             "city_key": result["city_key"],
             "sample_path": result["sample_path"],
+            "pantry_added_count": len(receipt_pantry_items),
+            "pantry_items_count": len(pantry_items),
         }
 
     except HTTPException:

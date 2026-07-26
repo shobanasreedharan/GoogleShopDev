@@ -1088,6 +1088,9 @@ function ReceiptPage({ getToken }) {
 
           <div style={{ padding: "10px 14px", borderRadius: 6, background: T.greenLight, fontSize: 12, color: T.green, fontWeight: 600 }}>
             ✓ Real prices saved to {result.city_key || result.city}. When you generate a meal plan in this city, these prices will be used instead of estimates.
+            {Number(result.pantry_added_count || 0) > 0 && (
+              <span> Receipt items were also added to your pantry ({result.pantry_items_count} total).</span>
+            )}
           </div>
         </Card>
       )}
@@ -1165,6 +1168,17 @@ export default function SmartCartAI() {
           ? raw.map(i=>(typeof i==="string"?i:i?.name||i?.item||"")).filter(Boolean)
           : [];
         if (items.length) setPantryText(items.join(", "));
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
       }).catch(()=>{})
     );
   }, [user, authLoading, getToken]);
