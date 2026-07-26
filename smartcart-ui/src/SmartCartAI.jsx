@@ -172,14 +172,15 @@ function buildMatrix(stores) {
   const allItems = new Set();
   stores.forEach(s => (s.items||[]).forEach(i => allItems.add(i.item)));
   const items = [...allItems].sort();
-  const matrix = {}, totals = {}, currencies = {}, sources = {}, notes = {}, priceStores = {};
+  const matrix = {}, totals = {}, currencies = {}, sources = {}, notes = {}, priceStores = {}, measurements = {};
   stores.forEach(s => {
-    const n = s.store_name; totals[n]=0; matrix[n]={}; sources[n]={}; notes[n]={}; priceStores[n]={};
+    const n = s.store_name; totals[n]=0; matrix[n]={}; sources[n]={}; notes[n]={}; priceStores[n]={}; measurements[n]={};
     (s.items||[]).forEach(i => {
       matrix[n][i.item]=i.price;
       sources[n][i.item]=i.source || "estimate";
       notes[n][i.item]=i.note || (i.source === "receipt" ? "Verified price from a recent receipt" : "Estimated price");
       priceStores[n][i.item]=i.price_store || n;
+      measurements[n][i.item]=i.measurement || "";
       totals[n]+=i.price;
       if (!currencies[n]) currencies[n] = i.currency || "USD";
     });
@@ -190,7 +191,7 @@ function buildMatrix(stores) {
     stores.forEach(s => { const p=matrix[s.store_name]?.[item]; if(p!==undefined&&p<minP){minP=p;minS=s.store_name;} });
     if(minS){ wCounts[minS]=(wCounts[minS]||0)+1; wTotals[minS]=(wTotals[minS]||0)+minP; }
   });
-  return { items, matrix, totals, currencies, sources, notes, priceStores, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
+  return { items, matrix, totals, currencies, sources, notes, priceStores, measurements, wCounts, wTotals, overallCheapest:Object.values(wTotals).reduce((a,b)=>a+b,0) };
 }
 
 const CURRENCY_SYMBOLS = { USD:"$", INR:"₹", GBP:"£", CAD:"CA$", AUD:"A$", SGD:"S$", AED:"AED " };
@@ -1363,7 +1364,12 @@ export default function SmartCartAI() {
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ budget: 100 }),
+        body: JSON.stringify({
+          budget: 100,
+          dietary_instruction: dietary,
+          ...(userLatLng ? { user_lat: userLatLng.lat, user_lng: userLatLng.lng } : {}),
+          ...(manualLocationSet ? { manual_city: manualCity, manual_state: manualState, manual_postal_code: manualPostalCode } : {}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Weekly Smart Plan failed");
@@ -1377,35 +1383,6 @@ export default function SmartCartAI() {
       throw new Error(message);
     } finally {
       setWeekPlanLoading(false);
-    }
-  };
-
-const handleApproveWeekPlan = async (planOverride = weekPlan) => {
-    const planToApprove = planOverride || weekPlan;
-    if (!planToApprove) {
-      const message = "Generate a weekly plan before saving.";
-      setWeekPlanError(message);
-      throw new Error(message);
-    }
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          suggested_meals: weekPlan.suggested_meals,
-          combined_shopping_list: weekPlan.combined_shopping_list,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
-      setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
-      setData(weekPlanToResults(weekPlan));
-      setActiveTab("list");
-      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
-    } catch (e) {
-      setWeekPlanError(e.message);
     }
   };
 
@@ -1429,10 +1406,13 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
   const pm = stores.length ? buildMatrix(stores) : null;
   const pmExpensiveStore = pm ? Object.entries(pm.totals).sort((a,b)=>b[1]-a[1])[0]?.[0] : null;
   const pmCheapestStore  = pm ? Object.entries(pm.totals).sort((a,b)=>a[1]-b[1])[0]?.[0] : null;
-  const pmOriginalCost   = pm&&pmExpensiveStore ? pm.totals[pmExpensiveStore].toFixed(2) : (budgetOpt.original_cost??0);
-  const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
-  const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
-  const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
+  const budgetStoreTotals = budgetOpt.store_totals || {};
+  const budgetExpensiveStore = budgetOpt.expensive_store || (Object.entries(budgetStoreTotals).sort((a,b)=>Number(b[1])-Number(a[1]))[0]?.[0]) || pmExpensiveStore;
+  const budgetCheapestStore = budgetOpt.cheapest_store || (Object.entries(budgetStoreTotals).sort((a,b)=>Number(a[1])-Number(b[1]))[0]?.[0]) || pmCheapestStore;
+  const pmOriginalCost   = Number(budgetOpt.original_cost ?? (pm&&pmExpensiveStore ? pm.totals[pmExpensiveStore] : 0)).toFixed(2);
+  const pmOptimizedCost  = Number(budgetOpt.optimized_cost ?? (pm ? pm.overallCheapest : 0)).toFixed(2);
+  const pmMoneySaved     = Number(budgetOpt.money_saved ?? Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost))).toFixed(2);
+  const pmCurrency       = budgetOpt.currency || (pm ? (Object.values(pm.currencies)[0]||"USD") : "USD");
   const weekPlanMealsByDay = DAYS.map((day, dayIndex) => ({
     day,
     meals: ["Breakfast", "Lunch", "Dinner"].map((mealType, mealTypeIndex) => {
@@ -1642,17 +1622,6 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                       </div>
                     ))}
                   </div>
-                  <AgentTrace steps={weekPlan.steps||[]} />
-                  {!!weekPlan.combined_shopping_list?.length && (
-                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
-                    </div>
-                  )}
-                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
-                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
-                    <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
-                  </div>
                 </div>
               )}
             </Card>
@@ -1731,7 +1700,7 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                           );
                         })()}
                         <Card>
-                          <SectionHead label="Price Comparison Table" sub="Green = cheapest for that item" delay="1"/>
+                          <SectionHead label="Estimated Price Comparison Table" sub="Green = cheapest for that item" delay="1"/>
                           <div style={{ overflowX:"auto" }}>
                             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
                               <thead>
@@ -1747,7 +1716,7 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                                   return (
                                     <tr key={item} style={{ background:ri%2===0?T.surfaceAlt:T.surface }}>
                                       <td style={{ padding:"8px 12px", textTransform:"capitalize", fontWeight:500 }}>{item}</td>
-                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; const source=pm.sources[s.store_name]?.[item]; const sourceStore=pm.priceStores[s.store_name]?.[item]; const note=pm.notes[s.store_name]?.[item]; return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?<><div>{formatPrice(p,curr)}</div><div title={note} style={{ fontFamily:"'Lato',sans-serif", fontSize:10, fontWeight:700, color:source==="receipt"?T.green:T.inkSec, marginTop:2 }}>{source==="receipt"?"🧾 Receipt":"Estimate"}{source==="receipt"&&sourceStore&&sourceStore!==s.store_name?` · ${sourceStore}`:""}</div></>:<span title="Not available">N/A</span>}</td>; })}
+                                      {stores.map(s=>{ const p=pm.matrix[s.store_name]?.[item], isMin=p===minP, curr=pm.currencies[s.store_name]||"USD"; const source=pm.sources[s.store_name]?.[item]; const sourceStore=pm.priceStores[s.store_name]?.[item]; const note=pm.notes[s.store_name]?.[item]; const measurement=pm.measurements[s.store_name]?.[item]; const detail=source==="receipt"?`🧾 Receipt${sourceStore&&sourceStore!==s.store_name?` · ${sourceStore}`:""}${measurement?` · per ${measurement}`:""}`:(measurement?`per ${measurement}`:""); return <td key={s.store_name} style={{ padding:"8px 12px", textAlign:"right", fontFamily:"'DM Mono',monospace", background:isMin?T.greenLight:p===undefined?"#fff5f5":"transparent", color:isMin?T.green:p===undefined?T.red:T.ink, fontWeight:isMin?700:400 }}>{p!==undefined?<><div>{formatPrice(p,curr)}</div>{detail&&<div title={note} style={{ fontFamily:"'Lato',sans-serif", fontSize:10, fontWeight:700, color:source==="receipt"?T.green:T.inkSec, marginTop:2 }}>{detail}</div>}</>:<span title="Not available">N/A</span>}</td>; })}
                                     </tr>
                                   );
                                 })}
@@ -1757,7 +1726,7 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                                 </tr>
                               </tbody>
                             </table>
-                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store. 🧾 Receipt = verified uploaded receipt price; Estimate = generated price estimate.</p>
+                            <p style={{ fontSize:11, color:T.inkSec, marginTop:8, fontStyle:"italic" }}>* <span style={{ color:T.red }}>N/A</span> = item not carried at this store. 🧾 Receipt = verified uploaded receipt price; estimated prices are shown without a label.</p>
                           </div>
                         </Card>
                       </>
@@ -1779,7 +1748,9 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                               </div>
                               <div style={{ paddingBottom:12, paddingTop:5 }}>
                                 <div style={{ fontSize:15, fontWeight:600, fontFamily:"'Playfair Display',serif", color:stop.isStart?T.green:T.ink }}>{stop.store_name}</div>
-                                {!stop.isStart&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.distance_km} km away</div>}
+                                {!stop.isStart&&Number.isFinite(Number(stop.distance_km))&&Number(stop.distance_km)<999&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.distance_km} km away</div>}
+                                {!stop.isStart&&stop.address&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.address}</div>}
+                                {!stop.isStart&&stop.rating&&<div style={{ fontSize:11, color:T.amber, marginTop:2 }}>★ {stop.rating}</div>}
                               </div>
                             </div>
                           ))}
@@ -1885,13 +1856,13 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                     <SectionHead label="Budget Optimization" delay="1"/>
                     {(pmExpensiveStore||pmCheapestStore)&&(
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:"1.25rem", padding:"10px 14px", background:T.surfaceAlt, borderRadius:6, border:`1px solid ${T.border}`, fontSize:12 }}>
-                        <div><span style={{ color:T.inkSec }}>Most expensive: </span><span style={{ fontWeight:700, color:T.red }}>{pmExpensiveStore||"—"}</span></div>
-                        <div><span style={{ color:T.inkSec }}>Cheapest: </span><span style={{ fontWeight:700, color:T.green }}>{pmCheapestStore||"—"}</span></div>
+                        <div><span style={{ color:T.inkSec }}>Most expensive: </span><span style={{ fontWeight:700, color:T.red }}>{budgetExpensiveStore||"—"}</span></div>
+                        <div><span style={{ color:T.inkSec }}>Cheapest: </span><span style={{ fontWeight:700, color:T.green }}>{budgetCheapestStore||"—"}</span></div>
                       </div>
                     )}
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:"1.25rem" }}>
                       {[
-                        {label:"Without Optimization",sublabel:pmExpensiveStore?`Single store: ${pmExpensiveStore}`:"Most expensive store",value:formatPrice(parseFloat(pmOriginalCost),pmCurrency),color:T.red},
+                        {label:"Without Optimization",sublabel:budgetExpensiveStore?`Single store: ${budgetExpensiveStore}`:"Most expensive store",value:formatPrice(parseFloat(pmOriginalCost),pmCurrency),color:T.red},
                         {label:"With Optimization",sublabel:"Multi-store cheapest basket",value:formatPrice(parseFloat(pmOptimizedCost),pmCurrency),color:T.green},
                         {label:"You Save",sublabel:"vs worst single store",value:formatPrice(parseFloat(pmMoneySaved),pmCurrency),color:T.blue},
                       ].map((m,i)=>(
