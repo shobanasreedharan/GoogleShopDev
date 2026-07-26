@@ -40,7 +40,7 @@ All Codex-authored changes were reviewed, tested end-to-end against the live dep
 - **Frontend:** React, deployed to Firebase Hosting (multi-target setup across three hackathon submissions from one codebase)
 - **Backend:** FastAPI on Google Cloud Run, containerized via Cloud Build and Artifact Registry
 - **AI layer:** GPT-5.6 (primary) with automatic Gemini fallback
-- **Data:** Firestore (user-scoped pantry, meal plans, receipts) + MongoDB-backed caching
+- **Data:** Firestore (user-scoped pantry, recipe cache, meal plans, receipts)
 - **Auth:** Firebase Auth with Google Sign-In
 - **Store pricing:** Real store-finder pipeline using location + Places data, filtered to grocery stores, pricing the actual generated shopping list per store
 
