@@ -117,6 +117,49 @@ GROCERY_NAME_HINTS = (
     "whole foods",
 )
 
+REGIONAL_STORE_NAME_HINTS = {
+    "indian": (
+        "apna",
+        "bharat",
+        "desi",
+        "india",
+        "indian",
+        "indo",
+        "kirana",
+        "lakshmi",
+        "namaste",
+        "patel",
+        "spice",
+        "spices",
+        "subzi",
+        "swadeshi",
+    ),
+}
+
+REGIONAL_ITEM_HINTS = {
+    "indian": (
+        "atta",
+        "basmati",
+        "biryani",
+        "chana",
+        "curry",
+        "dal",
+        "dhal",
+        "dosa",
+        "ghee",
+        "idli",
+        "masala",
+        "paneer",
+        "poha",
+        "sambar",
+        "tamarind",
+        "toor",
+        "turmeric",
+        "upma",
+        "urad",
+    ),
+}
+
 NON_GROCERY_NAME_HINTS = (
     "bp",
     "cafe",
@@ -145,11 +188,33 @@ def _is_grocery_place(place):
     return any(hint in name for hint in GROCERY_NAME_HINTS)
 
 
+def _is_regional_store(store, regional_preference=""):
+    """Return whether a store name matches the requested regional grocery type."""
+    preference = str(regional_preference or "").strip().lower()
+    if not preference:
+        return True
+
+    hints = REGIONAL_STORE_NAME_HINTS.get(preference)
+    if not hints:
+        return True
+
+    name = str(store.get("name") or store.get("brand") or "").lower()
+    return any(hint in name for hint in hints)
+
+
+def _regional_preference_from_items(shopping_list) -> str:
+    text = " ".join(str(item) for item in (shopping_list or [])).lower()
+    for region, hints in REGIONAL_ITEM_HINTS.items():
+        if any(hint in text for hint in hints):
+            return region
+    return ""
+
+
 # =====================================================
 # NEARBY STORES
 # =====================================================
 
-def find_nearby_grocery_stores(lat, lng, radius=15000):
+def find_nearby_grocery_stores(lat, lng, radius=15000, keyword="grocery store"):
 
     if lat is None or lng is None:
         print("[stores] invalid input coordinates")
@@ -193,12 +258,12 @@ def find_nearby_grocery_stores(lat, lng, radius=15000):
     params = {
         "location": f"{lat},{lng}",
         "radius": radius,
-        "keyword": "grocery store",
+        "keyword": keyword,
         "key": GOOGLE_MAPS_API_KEY
     }
     try:
         res = requests.get(url, params=params, timeout=10).json()
-        print(f"\n[DEBUG] Google Places results for keyword='grocery store':")
+        print(f"\n[DEBUG] Google Places results for keyword={keyword!r}:")
         for i, place in enumerate(res.get("results", [])):
             print(i, "-", place.get("name"), "|", place.get("types"))
         all_results.extend(res.get("results", []))
@@ -363,7 +428,7 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
 
     return inventory
 
-def _receipt_stores_for_city(city="", state="", country=""):
+def _receipt_stores_for_city(city="", state="", country="", regional_preference=""):
     if not city or not state:
         return []
     try:
@@ -386,6 +451,10 @@ def _receipt_stores_for_city(city="", state="", country=""):
             "rating": store.get("rating", 4.0),
             "source": "receipt",
         })
+    if regional_preference:
+        before = len(stores)
+        stores = [store for store in stores if _is_regional_store(store, regional_preference)]
+        print(f"[store] receipt city-store regional filter={regional_preference!r}: {len(stores)}/{before}")
     print(f"[store] receipt city-store fallback found {len(stores)} stores for {city}, {state}")
     return stores
 
@@ -448,7 +517,7 @@ def score_store(store, inventory, user_location):
 # MAIN RECOMMENDER (🔥 UPDATED OUTPUT)
 # =====================================================
 
-def recommend_best_store(user_location, shopping_list):
+def recommend_best_store(user_location, shopping_list, regional_preference=None):
     if not isinstance(user_location, dict):
         print("[store] invalid user_location type")
         return []
@@ -463,18 +532,31 @@ def recommend_best_store(user_location, shopping_list):
     city = user_location.get("city", "")
     state = user_location.get("region", "")
     country = user_location.get("country", "")
+    regional_preference = (
+        regional_preference
+        or user_location.get("regional_store_preference")
+        or user_location.get("store_preference")
+        or _regional_preference_from_items(shopping_list)
+        or ""
+    )
 
     print(f"[store] city resolved for price recommendations: city={city!r} state={state!r} country={country!r}")
     try:
-        stores = find_nearby_grocery_stores(lat, lng)
+        search_keyword = f"{regional_preference} grocery store" if regional_preference else "grocery store"
+        stores = find_nearby_grocery_stores(lat, lng, keyword=search_keyword)
     except Exception as e:
         print("[store] failed to fetch stores:", e)
         stores = []
     print(f"[store] nearby store results: {len(stores)}")
 
+    if regional_preference:
+        before = len(stores)
+        stores = [store for store in stores if _is_regional_store(store, regional_preference)]
+        print(f"[store] regional store filter={regional_preference!r}: {len(stores)}/{before}")
+
     if not stores:
         print("[store] no stores returned from finder; trying receipt city stores")
-        stores = _receipt_stores_for_city(city, state, country)
+        stores = _receipt_stores_for_city(city, state, country, regional_preference)
 
     if not stores:
         print("[store] no stores available after receipt fallback")
