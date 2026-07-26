@@ -138,7 +138,8 @@ function TabBtn({ active, onClick, children }) {
 }
 
 const DAYS  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-const MEAL_TYPES = ["Breakfast","Lunch","Dinner"];
+// Keep MEAL_TYPES adjacent to DAYS because both drive the 7-day meal planner grid.
+const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner"];
 const DIETS = ["None","Vegetarian","Vegan","Keto","High Protein","Low Carb"];
 const TABS  = [
   { id:"list",      label:"Shopping List" },
@@ -1144,6 +1145,17 @@ export default function SmartCartAI() {
           ? raw.map(i=>(typeof i==="string"?i:i?.name||i?.item||"")).filter(Boolean)
           : [];
         if (items.length) setPantryText(items.join(", "));
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
       }).catch(()=>{})
     );
   }, [user, authLoading, getToken]);
