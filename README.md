@@ -13,8 +13,6 @@ Built for OpenAI Build Week. Originally created as SmartCart AI for the Google C
 SmartCart AI offers two agent modes:
 
 - **Plan My Week** — fully autonomous. No preferences required. The agent chains five tools in a single run: checks your pantry, generates a week of meals, builds a shopping list, optimizes your budget, and compares real nearby grocery stores to find the cheapest one — all without mid-flow user input.
-- **Optimize My Cart** — generated when the user provides meal preferences. Runs the same pantry/budget/substitution/store-comparison tools, shaped around what the user actually wants to eat.
-
 Every tool call the agent makes is visible via **AgentTrace**, so the reasoning is never a black box. Clicking "Plan meal from my pantry" in chat shows the exact agent tool being invoked in real time.
 
 ---
@@ -40,7 +38,7 @@ All Codex-authored changes were reviewed, tested end-to-end against the live dep
 - **Frontend:** React, deployed to Firebase Hosting (multi-target setup across three hackathon submissions from one codebase)
 - **Backend:** FastAPI on Google Cloud Run, containerized via Cloud Build and Artifact Registry
 - **AI layer:** GPT-5.6 (primary) with automatic Gemini fallback
-- **Data:** Firestore (user-scoped pantry, meal plans, receipts) + MongoDB-backed caching
+- **Data:** Firestore (user-scoped pantry, recipe cache, meal plans, receipts)
 - **Auth:** Firebase Auth with Google Sign-In
 - **Store pricing:** Real store-finder pipeline using location + Places data, filtered to grocery stores, pricing the actual generated shopping list per store
 

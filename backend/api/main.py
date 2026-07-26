@@ -23,13 +23,11 @@ from backend.agent.chat_tool_router import (
     build_tool_context,
     route_chat_tools,
 )
-from backend.agent.cart_optimization_agent import build_cart_optimization_plan
 from backend.agent.week_plan_agent import build_week_plan
-from backend.db.meal_plan_repository import save_meal_plan
 from backend.core.pipeline import run_grocery_pipeline
 from backend.core.gpt56_client import generate_primary_or_fallback
 from auth import get_current_user
-from backend.db.recipe_cache_repository import list_recipes, user_save_recipe
+from backend.db.recipe_cache_repository import build_recipe_cache_key, list_recipes, save_recipe_cache, user_save_recipe
 from backend.db.rate_limit_repository import (
     check_generate_limit,
     check_gemini_limit,
@@ -158,15 +156,10 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
 
-class CartOptimizationRequest(BaseModel):
-    shopping_list: List[str]
-    substitutions: Dict[str, object] = {}
-    budget: float = 100
-
 class PlanMyWeekRequest(BaseModel):
     budget: float = 100
     dietary_instruction: str = "Vegetarian only"
-    meal_count: int = 5
+    meal_count: int = 21
     user_lat: float | None = None
     user_lng: float | None = None
     manual_city: str | None = None
@@ -193,6 +186,8 @@ class PlanMyWeekApproveRequest(BaseModel):
     shopping_list: List[str | ShoppingListItem] | Dict[str, str | float | int | ShoppingListItem] | None = None
     budget_summary: Dict[str, object] = {}
     nutrition_report: Dict[str, object] = {}
+    meal_ingredients: Dict[str, List[str]] = {}
+    dietary_instruction: str = "Vegetarian only"
 
 class ReceiptUploadRequest(BaseModel):
     image_base64: str        # base64-encoded image or PDF
@@ -225,6 +220,27 @@ def _model_fields(value: object) -> dict:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _meal_type_lookup(raw_meals: object) -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    if isinstance(raw_meals, list):
+        for meal in raw_meals:
+            fields = _model_fields(meal)
+            title = _text_or_empty(fields.get("name") or fields.get("title") or fields.get("meal"))
+            meal_type = _meal_type_from_slot(fields.get("meal_type") or fields.get("mealType") or fields.get("type"))
+            if title and meal_type:
+                lookup[title] = meal_type
+    elif isinstance(raw_meals, dict):
+        for key, value in raw_meals.items():
+            fields = _model_fields(value)
+            meal_type = _meal_type_from_slot(key) or _meal_type_from_slot(fields.get("meal_type") or fields.get("mealType") or fields.get("type"))
+            title = _text_or_empty(fields.get("name") or fields.get("title") or fields.get("meal") or value)
+            if title and meal_type:
+                lookup[title] = meal_type
+            if key and meal_type:
+                lookup[_text_or_empty(key)] = meal_type
+    return lookup
 
 
 def _normalize_weekly_meals(raw_meals: object) -> Dict[str, str]:
@@ -262,6 +278,14 @@ def _normalize_weekly_meals(raw_meals: object) -> Dict[str, str]:
                     normalized[title] = description
 
     return normalized
+
+
+def _meal_type_from_slot(slot: str | None) -> str:
+    normalized = " ".join((slot or "").strip().lower().split())
+    for meal_type in ("breakfast", "lunch", "dinner"):
+        if meal_type in normalized.split():
+            return meal_type
+    return normalized if normalized in {"breakfast", "lunch", "dinner"} else ""
 
 
 def _normalize_shopping_list(raw_items: object) -> List[str]:
@@ -384,8 +408,8 @@ def plan_my_week(request: PlanMyWeekRequest, user: dict = Depends(get_current_us
     uid = user["uid"]
     print(f"[plan-my-week] request received for user={uid}")
     try:
-        if request.meal_count < 1 or request.meal_count > 7:
-            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 7")
+        if request.meal_count < 1 or request.meal_count > 21:
+            raise HTTPException(status_code=400, detail="meal_count must be between 1 and 21")
 
         gemini_check = check_gemini_limit(uid)
         result = build_week_plan(
@@ -422,6 +446,7 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
         raw_weekly_meals = request.suggested_meals if request.suggested_meals is not None else request.weekly_meals
         raw_shopping_list = request.combined_shopping_list if request.combined_shopping_list is not None else request.shopping_list
         weekly_meals = _normalize_weekly_meals(raw_weekly_meals)
+        meal_type_lookup = _meal_type_lookup(raw_weekly_meals)
         shopping_list = _normalize_shopping_list(raw_shopping_list)
 
         if not weekly_meals:
@@ -429,40 +454,27 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
         if not shopping_list:
             raise HTTPException(status_code=400, detail="shopping_list or combined_shopping_list is required")
 
-        saved = save_meal_plan(
-            user_id=uid,
-            weekly_meals=weekly_meals,
-            shopping_list=shopping_list,
-            budget_summary=request.budget_summary,
-            nutrition_report=request.nutrition_report,
-        )
+        saved = []
+        meal_ingredients = request.meal_ingredients or {}
+        for meal_key, description in weekly_meals.items():
+            slot_meal_type = _meal_type_from_slot(meal_key)
+            meal_type = meal_type_lookup.get(meal_key) or slot_meal_type
+            meal_name = description if slot_meal_type and description else meal_key
+            ingredients = meal_ingredients.get(meal_name) or meal_ingredients.get(meal_key) or shopping_list
+            cache_key = build_recipe_cache_key(meal_name, request.dietary_instruction)
+            saved.append(save_recipe_cache(
+                user_id=uid,
+                meal=cache_key,
+                ingredients=ingredients,
+                source="approved_week_plan",
+                nutrition=request.nutrition_report,
+                meal_type=meal_type,
+            ))
         return {"success": True, "saved": saved}
     except HTTPException:
         raise
     except Exception as e:
         print(f"[plan-my-week] approve failed: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/optimize-cart-agent")
-async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
-    uid = user["uid"]
-    print(f"[optimize-cart-agent] request received for user={uid}")
-    try:
-        return build_cart_optimization_plan(
-            user_id=uid,
-            shopping_list=request.shopping_list,
-            substitutions=request.substitutions,
-            budget=request.budget,
-        )
-    except ValueError as e:
-        print(f"[optimize-cart-agent] bad request: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[optimize-cart-agent] failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
