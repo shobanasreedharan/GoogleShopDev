@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 class MCPTool(ABC):
     """
-    Standard interface for ALL MCP tools (MongoDB, Maps, etc.)
+    Standard interface for ALL MCP tools (Maps, recipe cache, etc.)
     """
 
     @abstractmethod
