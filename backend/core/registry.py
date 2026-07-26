@@ -43,7 +43,3 @@ class MCPRegistry:
 
 
 MCP_REGISTRY = MCPRegistry()
-
-# REGISTER TOOL
-from backend.mcp.mongo_tools import MongoTools
-MCP_REGISTRY.register("mongo", MongoTools())
