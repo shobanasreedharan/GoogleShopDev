@@ -37,13 +37,13 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
 1. User submits a meal request, grocery list, or weekly meal plan.
 2. Request is received by the React frontend and sent to the FastAPI backend.
 3. Google ADK agent orchestrates the planning workflow.
-4. MCP server is queried for cached recipes via MongoDB Atlas.
+4. Firestore-backed recipe cache is queried for cached recipes.
 5. If cache hit → return stored meal plan, nutrition data, and substitutions.
 6. If cache miss → Gemini 2.5 Flash generates:
    - Ingredient list
    - Nutrition breakdown
    - Substitution suggestions
-7. MCP tool retrieves pantry inventory from MongoDB Atlas.
+7. Firestore-backed pantry repository retrieves pantry inventory.
 8. Pantry-aware logic filters available ingredients and adjusts meal generation accordingly.
 9. Google Maps API is used to discover nearby grocery stores.
 10. Store options are evaluated and an optimized shopping route is generated.
@@ -70,9 +70,9 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
 
 **AI** — Google Gemini 2.5 Flash via Vertex AI generates shopping lists, nutrition analysis, and substitution recommendations in a single structured JSON prompt.
 
-**MCP Integration** — FastMCP (Model Context Protocol) connects the agent to MongoDB Atlas for pantry management and recipe caching. The agent uses MCP tools to read pantry items and persist user preferences.
+**MCP Integration** — Firestore repositories manage pantry data, recipe caching, and user preferences directly.
 
-**Smart Caching** — MongoDB Atlas caches shopping lists, substitutions, and nutrition reports per recipe. On repeat requests for the same meal, data is served directly from MongoDB — no Gemini API call is made — significantly reducing token costs. Cache keys are normalized to handle spacing and casing variations.
+**Smart Caching** — Firestore-backed recipe cache stores shopping lists, substitutions, and nutrition reports per recipe. On repeat requests for the same meal, cached data is served without another Gemini API call, reducing token costs. Cache keys are normalized to handle spacing and casing variations.
 
 **Maps & Location** — Google Maps API powers store discovery and route optimization based on the user's live GPS location.
 
@@ -111,7 +111,7 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
            │                                            │
            ▼                                            │
 ┌────────────────────────────┐                          │
-│     MongoDB Atlas          │◄─────────────────────────┘
+│     Firestore Cache        │◄─────────────────────────┘
 │  (State + Cache Layer)     │
 └────────────────────────────┘
 
@@ -142,7 +142,7 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
 - Google ADK — agent orchestration, tool calling, session management
 - Gemini 2.5 Flash on Vertex AI — meal plan generation, nutrition analysis, substitution suggestions
 - FastMCP (Python) — custom MCP server exposing pantry, meal plan, and recipe cache tools
-- MongoDB Atlas — persistent storage for pantry inventory, meal plans, and recipe cache
+- Firestore — persistent storage for pantry inventory, meal plans, and recipe cache
 - FastAPI — backend pipeline for store pricing, route optimization, and budget analysis
 - React — frontend UI with 6 result tabs
 - Google Cloud Run — serverless deployment for ADK agent, MCP server, and FastAPI backend
@@ -153,7 +153,7 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
 
 ## MCP Tools exposed:
 
-- get_pantry_items — fetches user’s current pantry from MongoDB
+- get_pantry_items — fetches user’s current pantry from Firestore
 - save_meal_plan_tool — persists generated meal plan and shopping list
 - get_recipe_cache — checks if a recipe was previously generated
 - save_recipe_cache_tool — caches new recipes to avoid redundant Gemini calls
@@ -163,7 +163,7 @@ The result is a single end-to-end assistant that replaces multiple apps and manu
 
 ## Why MCP
 
-Rather than allowing the agent to directly access MongoDB Atlas, we exposed pantry management, recipe caching, and meal plan persistence through a custom FastMCP server.
+The app exposes pantry management, recipe caching, and meal plan persistence through Firestore-backed repository helpers.
 
 This gives the Google ADK agent a standardized tool interface for interacting with external data. The agent can dynamically discover and invoke tools without needing database-specific logic, keeping the AI reasoning layer separate from the persistence layer.
 
@@ -175,7 +175,7 @@ This architecture enables persistent memory, reusable tooling, and clean separat
 ---
 
 ## The MCP Integration
-The heart of SmartCart AI is the MCP server running as a standalone Cloud Run service. The ADK agent connects to it via Streamable HTTP — the modern MCP transport protocol. Every time a user asks about their pantry or saves a meal plan, the agent calls the MCP server which handles all MongoDB operations. This separation of concerns means the AI layer stays clean while the data layer stays persistent and reusable.
+The heart of SmartCart AI is the MCP server running as a standalone Cloud Run service. The ADK agent connects to it via Streamable HTTP — the modern MCP transport protocol. Every time a user asks about their pantry or saves a meal plan, repository helpers handle persistence. This separation of concerns means the AI layer stays clean while the data layer stays persistent and reusable.
 
 The recipe cache tool is particularly powerful — if Gemini already generated a recipe for “Lentil Curry” previously, the MCP server returns the cached result directly instead of making a new Gemini call. This eliminates redundant model inference, reduces operational costs, and improves the user experience for repeat recipe requests.
 
@@ -194,7 +194,7 @@ The recipe cache tool is particularly powerful — if Gemini already generated a
 
 - Built a production-ready AI agent using Google ADK, Gemini, MCP, and Cloud Run
 - Designed a custom FastMCP server exposing pantry, caching, and persistence tools to the ADK agent
-- Eliminated redundant Gemini API calls for repeat recipes through MongoDB-backed caching, significantly reducing response time and token consumption
+- Eliminated redundant Gemini API calls for repeat recipes through Firestore-backed caching, significantly reducing response time and token consumption
 - Implemented personalized grocery planning based on pantry inventory and dietary preferences
 - Deployed the entire system serverlessly on Google Cloud
 
@@ -229,7 +229,7 @@ The recipe cache tool is particularly powerful — if Gemini already generated a
 
 ## Built With
 
-`google-gemini` `vertex-ai` `google-cloud-run` `firebase` `fastapi` `python` `react` `mongodb-atlas` `fastmcp` `google-maps-api` `google-cloud-build` `docker`
+`google-gemini` `vertex-ai` `google-cloud-run` `firebase` `fastapi` `python` `react` `firestore` `google-maps-api` `google-cloud-build` `docker`
 
 ---
 
