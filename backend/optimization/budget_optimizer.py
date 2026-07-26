@@ -1,7 +1,7 @@
 """
 budget_optimizer.py
 ====================
-Uses real MongoDB prices to calculate:
+Uses deterministic estimated prices to calculate:
 - Original cost: what you'd pay at the most expensive store
 - Optimized cost: what you'd pay at the cheapest store
 - Money saved: the difference
@@ -11,10 +11,6 @@ that always returned $0 savings.
 """
 
 from collections import defaultdict
-#from backend.services.price_engine import (
-   # get_item_price,
-    #STORES
-#)
 STORES = [
     "Walmart", "Kroger", "ALDI",
     "Whole Foods", "Trader Joe's", "Costco",
@@ -66,17 +62,10 @@ LUXURY_KEYWORDS = [
 
 
 # =====================================================
-# REAL PRICE LOOKUP
-# Gets price from MongoDB for a specific store
-# Falls back to $2.50 if item not in DB
+# PRICE LOOKUP
+# Gets a deterministic estimate for a specific store
+# Falls back to $2.50 for unknown items
 # =====================================================
-
-#def get_real_price(item: str, store: str) -> float:
-    #"""Get real price from MongoDB products collection."""
-    #try:
-        #return get_item_price(store, item)
-    #except Exception:
-        #return 2.50
 
 def get_real_price(item: str, store: str) -> float:
     """Mock price - deterministic based on item+store hash."""
@@ -166,7 +155,7 @@ def optimize_for_budget(
             "expensive_store": "—",
         }
 
-    # Get real prices from MongoDB
+    # Get deterministic estimated prices
     best_worst = find_best_worst_stores(shopping_list)
 
     original_cost  = best_worst["expensive_total"]   # worst case cost

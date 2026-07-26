@@ -23,7 +23,6 @@ from backend.agent.chat_tool_router import (
     build_tool_context,
     route_chat_tools,
 )
-from backend.agent.cart_optimization_agent import build_cart_optimization_plan
 from backend.agent.week_plan_agent import build_week_plan
 from backend.db.meal_plan_repository import save_meal_plan
 from backend.core.pipeline import run_grocery_pipeline
@@ -38,7 +37,7 @@ from backend.db.rate_limit_repository import (
 )
 import base64
 from backend.db.store_prices_repository import save_store_prices
-from backend.db.pantry_repository import get_pantry, save_pantry
+from backend.db.pantry_repository import add_items as add_pantry_items, get_pantry, save_pantry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MCP_SERVER_URL = os.getenv(
@@ -157,11 +156,6 @@ class DishRequest(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str = "default"
     message:    str
-
-class CartOptimizationRequest(BaseModel):
-    shopping_list: List[str]
-    substitutions: Dict[str, object] = {}
-    budget: float = 100
 
 class PlanMyWeekRequest(BaseModel):
     budget: float = 100
@@ -445,28 +439,6 @@ def approve_week_plan(request: PlanMyWeekApproveRequest, user: dict = Depends(ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/optimize-cart-agent")
-async def optimize_cart_agent(request: CartOptimizationRequest, user: dict = Depends(get_current_user)):
-    uid = user["uid"]
-    print(f"[optimize-cart-agent] request received for user={uid}")
-    try:
-        return build_cart_optimization_plan(
-            user_id=uid,
-            shopping_list=request.shopping_list,
-            substitutions=request.substitutions,
-            budget=request.budget,
-        )
-    except ValueError as e:
-        print(f"[optimize-cart-agent] bad request: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[optimize-cart-agent] failed: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/chat")
 async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     uid = user["uid"]
@@ -708,6 +680,10 @@ RULES:
         )
         print(f"[receipt/upload] Firestore write result: {result}")
 
+        receipt_pantry_items = [str(item).strip().lower() for item in items.keys() if str(item).strip()]
+        pantry_items = add_pantry_items(uid, receipt_pantry_items)
+        print(f"[receipt/upload] added {len(receipt_pantry_items)} receipt item(s) to pantry; pantry now has {len(pantry_items)} item(s)")
+
         return {
             "success": True,
             "store_name": store_name,
@@ -718,6 +694,8 @@ RULES:
             "store_id": result["store_id"],
             "city_key": result["city_key"],
             "sample_path": result["sample_path"],
+            "pantry_added_count": len(receipt_pantry_items),
+            "pantry_items_count": len(pantry_items),
         }
 
     except HTTPException:
