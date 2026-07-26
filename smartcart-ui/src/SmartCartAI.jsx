@@ -215,6 +215,26 @@ function apiErrorMessage(json={}, fallback="Request failed") {
   return fallback;
 }
 
+function weekPlanToResults(plan={}) {
+  return {
+    shopping_list: plan.shopping_list || plan.combined_shopping_list || [],
+    recommended_stores: plan.recommended_stores || [],
+    optimized_route: plan.optimized_route || [],
+    nutrition_report: plan.nutrition_report || {},
+    substitutions: plan.substitutions || {},
+    budget_summary: plan.budget_summary || {
+      optimization: {
+        original_cost: plan.original_total || 0,
+        optimized_cost: plan.optimized_total || 0,
+        savings: plan.estimated_savings || 0,
+        currency: plan.currency || "USD",
+      },
+    },
+    price_sources: plan.price_sources || {},
+    agent_trace: plan.steps || [],
+  };
+}
+
 // ── Chat Panel ───────────────────────────────────────────────────────────────
 function toolLabel(name="") {
   const labels = {
@@ -1171,6 +1191,17 @@ export default function SmartCartAI() {
     );
   }, [user, authLoading, getToken]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
   const syncPantry = async (items) => {
     if (!user) return;
     const token = await getToken();
@@ -1315,7 +1346,6 @@ export default function SmartCartAI() {
       setData(weekPlanToResults(json));
       setActiveTab("list");
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
-      return json;
     } catch (e) {
       const message = e.message || "Plan My Week failed";
       setWeekPlanError(message);
@@ -1345,25 +1375,10 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
-      setWeekPlanSaveMsg({ type: "success", text: "Smart plan generated and saved to your recipe cache." });
-      setData(weekPlanToResults(planToApprove));
+      setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
+      setData(weekPlanToResults(weekPlan));
       setActiveTab("list");
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
-      return json;
-    } catch (e) {
-      const message = e.message || "Generate Smart Plan failed";
-      setWeekPlanError(message);
-      throw new Error(message);
-    } finally {
-      setWeekPlanLoading(false);
-    }
-  };
-
-  const handleGenerateAiPlanner = async () => {
-    setWeekPlanError(null); setWeekPlanSaveMsg(null);
-    try {
-      const plan = weekPlan || await handlePlanMyWeek();
-      if (plan) await handleApproveWeekPlan(plan);
     } catch (e) {
       setWeekPlanError(e.message);
     }
