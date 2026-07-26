@@ -5,6 +5,7 @@ from backend.services.store_finder import recommend_best_store
 from backend.optimization.route_optimizer import optimize_route
 from backend.services.location import get_user_location
 from backend.utils.sanitizers import clean_shopping_list, clean_stores
+
 from backend.agent.unified_ai_agent import run_unified_ai
 from backend.validators.nutrition_validator import validate_nutrition
 from backend.db.recipe_cache_repository import (
@@ -15,6 +16,33 @@ from backend.db.recipe_cache_repository import (
 
 from backend.db.pantry_repository import get_pantry
 
+INDIAN_MEAL_HINTS = (
+    "biryani",
+    "chana",
+    "curry",
+    "dal",
+    "dhal",
+    "dosa",
+    "idli",
+    "masala",
+    "paneer",
+    "poha",
+    "sambar",
+    "tikka",
+    "upma",
+)
+
+
+def _regional_store_preference(weekly_meals: dict, shopping_list: list) -> str:
+    """Infer a regional grocery preference from user-entered meals/items."""
+    text = " ".join(
+        [str(value) for value in (weekly_meals or {}).values()]
+        + [str(item) for item in (shopping_list or [])]
+    ).lower()
+
+    if any(hint in text for hint in INDIAN_MEAL_HINTS):
+        return "indian"
+    return ""
 
 def _apply_substitutions(
     shopping_list: list,
@@ -228,6 +256,10 @@ def run_grocery_pipeline(
         "region": loc.get("region", ""),
         "country": loc.get("country", "")
     }
+    regional_preference = _regional_store_preference(weekly_meals, optimized_items)
+    if regional_preference:
+        user_location["regional_store_preference"] = regional_preference
+        print(f"[pipeline] Regional store preference inferred: {regional_preference}")
     print(f"[pipeline] User location: {user_location}")
     print(f"[pipeline] Raw location response: {loc}")
     print(f"[pipeline] STEP 6 done in {time.time() - t0:.1f}s")
@@ -246,7 +278,7 @@ def run_grocery_pipeline(
     # =====================================================
     try:
         store_results = clean_stores(
-            recommend_best_store(user_location, optimized_items)
+            recommend_best_store(user_location, optimized_items, regional_preference=regional_preference)
         )
         print(f"[pipeline] store_results: {len(store_results)}")
     except Exception as e:

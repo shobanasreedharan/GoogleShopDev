@@ -1216,6 +1216,17 @@ export default function SmartCartAI() {
     );
   }, [user, authLoading, getToken]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
   const syncPantry = async (items) => {
     if (!user) return;
     const token = await getToken();
