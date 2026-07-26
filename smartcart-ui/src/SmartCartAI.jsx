@@ -1382,35 +1382,6 @@ export default function SmartCartAI() {
     }
   };
 
-const handleApproveWeekPlan = async (planOverride = weekPlan) => {
-    const planToApprove = planOverride || weekPlan;
-    if (!planToApprove) {
-      const message = "Generate a weekly plan before saving.";
-      setWeekPlanError(message);
-      throw new Error(message);
-    }
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          suggested_meals: weekPlan.suggested_meals,
-          combined_shopping_list: weekPlan.combined_shopping_list,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
-      setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
-      setData(weekPlanToResults(weekPlan));
-      setActiveTab("list");
-      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
-    } catch (e) {
-      setWeekPlanError(e.message);
-    }
-  };
-
   const submitManualLocation = () => {
     const hasCityState = manualCity.trim() && manualState.trim();
     const hasPostalCode = manualPostalCode.trim();
@@ -1643,17 +1614,6 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                         </div>
                       </div>
                     ))}
-                  </div>
-                  <AgentTrace steps={weekPlan.steps||[]} />
-                  {!!weekPlan.combined_shopping_list?.length && (
-                    <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                      {weekPlan.combined_shopping_list.map((item,i)=><span key={`${item}-${i}`} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{item} · {(weekPlan.price_sources||{})[item] || "estimate"}</span>)}
-                    </div>
-                  )}
-                  {!!weekPlan.pantry_items_used?.length && <div style={{ fontSize:12, color:T.green }}>Pantry covered: {weekPlan.pantry_items_used.join(", ")}</div>}
-                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                    <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
-                    <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
                   </div>
                 </div>
               )}
