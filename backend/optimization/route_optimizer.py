@@ -1,4 +1,14 @@
-from backend.services.store_finder import haversine_distance
+import math
+
+
+def haversine_distance(lat1, lng1, lat2, lng2):
+    """Return approximate distance in kilometers between two coordinate pairs."""
+    radius_km = 6371
+    lat1, lng1, lat2, lng2 = map(math.radians, [lat1, lng1, lat2, lng2])
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+    return radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def optimize_route(stores, user_location):
@@ -17,7 +27,7 @@ def optimize_route(stores, user_location):
     Simple nearest-neighbor route optimization
     """
 
-    remaining = stores.copy()
+    remaining = valid_stores.copy()
 
     route = []
 
