@@ -1137,7 +1137,6 @@ export default function SmartCartAI() {
   const [weekPlan,        setWeekPlan]        = useState(null);
   const [weekPlanLoading, setWeekPlanLoading] = useState(false);
   const [weekPlanError,   setWeekPlanError]   = useState(null);
-  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -1169,6 +1168,39 @@ export default function SmartCartAI() {
           ? raw.map(i=>(typeof i==="string"?i:i?.name||i?.item||"")).filter(Boolean)
           : [];
         if (items.length) setPantryText(items.join(", "));
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
       }).catch(()=>{})
     );
   }, [user, authLoading, getToken]);
@@ -1314,7 +1346,7 @@ export default function SmartCartAI() {
   };
 
   const handlePlanMyWeek = async () => {
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
@@ -1329,16 +1361,22 @@ export default function SmartCartAI() {
       setActiveTab("list");
       setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
     } catch (e) {
-      setWeekPlanError(e.message);
+      const message = e.message || "Plan My Week failed";
+      setWeekPlanError(message);
+      throw new Error(message);
     } finally {
       setWeekPlanLoading(false);
     }
   };
 
-  const handleApproveWeekPlan = async () => {
-    if (!weekPlan) return;
-    //console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
-    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+const handleApproveWeekPlan = async (planOverride = weekPlan) => {
+    const planToApprove = planOverride || weekPlan;
+    if (!planToApprove) {
+      const message = "Generate a weekly plan before saving.";
+      setWeekPlanError(message);
+      throw new Error(message);
+    }
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
@@ -1604,7 +1642,6 @@ export default function SmartCartAI() {
                     <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
                     <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
                   </div>
-                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
                 </div>
               )}
             </Card>
@@ -1910,7 +1947,7 @@ export default function SmartCartAI() {
                 placeholder="e.g. Austin or Hyderabad"
                 style={{ width: "100%", background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 4, padding: "10px 12px", fontSize: 14, marginBottom: 12, boxSizing: "border-box", fontFamily: "'Lato',sans-serif" }}
               />
-    
+
               <Label>ZIP / Postal / PIN Code (recommended for accuracy)</Label>
               <input
                 type="text"
@@ -1922,7 +1959,7 @@ export default function SmartCartAI() {
               <p style={{ margin: "-8px 0 12px", fontSize: 12, color: T.subtext }}>
                 Adding this helps us find stores much closer to you than city alone.
               </p>
-    
+
               <Label>State / Province / Region</Label>
               <input
                 type="text"
