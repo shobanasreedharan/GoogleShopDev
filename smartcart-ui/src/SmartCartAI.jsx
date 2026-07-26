@@ -138,8 +138,8 @@ function TabBtn({ active, onClick, children }) {
 }
 
 const DAYS  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const MEAL_TYPES = ["Breakfast","Lunch","Dinner"];
 const DIETS = ["None","Vegetarian","Vegan","Keto","High Protein","Low Carb"];
-const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner"];
 const TABS  = [
   { id:"list",      label:"Shopping List" },
   { id:"stores",    label:"Store Prices"  },
@@ -1094,11 +1094,11 @@ export default function SmartCartAI() {
   const handleSignOut = () => signOut(auth).catch(console.error);
 
   // ── Home page state ───────────────────────────────────────────────────────
-  const [mode,         setMode]         = useState("aiPlanner");
-  const [dish,         setDish]         = useState("");
-  const [mealType,     setMealType]     = useState("Dinner");
-  const [weeklyMeals,  setWeeklyMeals]  = useState({});
+  const [mode,         setMode]         = useState("mealPlanner");
+  const [mealPlannerDays, setMealPlannerDays] = useState([{ breakfast:"", lunch:"", dinner:"" }]);
   const [manualText,   setManualText]   = useState("");
+  const [savedRecipes, setSavedRecipes] = useState([]);
+  const [activeMealSuggestion, setActiveMealSuggestion] = useState(null);
   const [pantryText,   setPantryText]   = useState("");
   const [dietary,      setDietary]      = useState("None");
   const [loading,      setLoading]      = useState(false);
@@ -1144,6 +1144,17 @@ export default function SmartCartAI() {
           ? raw.map(i=>(typeof i==="string"?i:i?.name||i?.item||"")).filter(Boolean)
           : [];
         if (items.length) setPantryText(items.join(", "));
+      }).catch(()=>{})
+    );
+  }, [user, authLoading, getToken]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    getToken().then(token =>
+      fetch(`${BASE_URL}/recipes/me`, {
+        headers: token ? { Authorization:`Bearer ${token}` } : {}
+      }).then(r=>r.json()).then(json => {
+        setSavedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
       }).catch(()=>{})
     );
   }, [user, authLoading, getToken]);
@@ -1201,6 +1212,37 @@ export default function SmartCartAI() {
 
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
+  const updateMealPlannerSlot = (dayIndex, mealType, value) => {
+    const key = mealType.toLowerCase();
+    setMealPlannerDays(prev => prev.map((day, idx) => idx === dayIndex ? { ...day, [key]: value } : day));
+  };
+
+  const addMealPlannerDay = () => {
+    setMealPlannerDays(prev => prev.length >= 7 ? prev : [...prev, { breakfast:"", lunch:"", dinner:"" }]);
+  };
+
+  const mealSuggestionsFor = (value, mealType) => {
+    const q = value.trim().toLowerCase();
+    if (!q) return [];
+    const type = mealType.toLowerCase();
+    return savedRecipes
+      .filter(recipe => {
+        const name = String(recipe?.meal || "").trim();
+        const recipeType = String(recipe?.meal_type || recipe?.mealType || "").toLowerCase();
+        return name.toLowerCase().includes(q) && (!recipeType || recipeType === type);
+      })
+      .slice(0, 5);
+  };
+
+  const handleShoppingListUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const incoming = text.split(/[\n,]+/).map(item=>item.trim()).filter(Boolean).join(", ");
+    setManualText(prev => [prev.trim(), incoming].filter(Boolean).join(", "));
+    e.target.value = "";
+  };
+
   const handleGenerate = async () => {
     if (mode === "aiPlanner") {
       setError(null);
@@ -1208,21 +1250,23 @@ export default function SmartCartAI() {
       return;
     }
     setError(null); setData(null); setLoading(true);
-    const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
+    const manualItems = manualText.split(/[\n,]+/).map(x=>x.trim().toLowerCase()).filter(Boolean);
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
-    let weekly = {};
-    if (mode !== "list") {
-      if (mode === "meal" && dish.trim()) weekly = { [mealType]:dish.trim() };
-      else weekly = Object.fromEntries(Object.entries(weeklyMeals).filter(([,v])=>v.trim()));
-    }
+    const weekly = {};
+    mealPlannerDays.forEach((day, dayIndex) => {
+      MEAL_TYPES.forEach(mealType => {
+        const key = mealType.toLowerCase();
+        const value = String(day[key] || "").trim();
+        if (value) weekly[`day_${dayIndex + 1}_${key}`] = value;
+      });
+    });
     if (!Object.keys(weekly).length&&!manualItems.length) {
-      setError("Please enter a meal or shopping items."); setLoading(false); return;
+      setError("Please enter at least one meal or shopping item."); setLoading(false); return;
     }
     try {
-      const modeStr = mode==="meal"?"🍽️ Single Meal":mode==="weekly"?"📅 Weekly Meals":mode==="list"?"🛍️ Shopping List Only":"🍽️ + 🛍️ Meal & Shopping List";
       const payload = {
         weekly_meals: weekly, manual_items: manualItems, budget:100,
-        pantry_items: pantryItems, dietary_instruction: dietary, mode: modeStr,
+        pantry_items: pantryItems, dietary_instruction: dietary, mode: "🍽️ Meal Planner",
         ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
         ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
       };
@@ -1443,41 +1487,71 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
             <Card className="fu" style={{ marginBottom:"2rem" }}>
               <SectionHead label="Plan Your Groceries" sub="AI builds your optimized shopping plan" />
               <div style={{ display:"flex", gap:8, marginBottom:"1.5rem", flexWrap:"wrap" }}>
+                <ModeBtn active={mode==="mealPlanner"} onClick={()=>setMode("mealPlanner")}>🍽️ Meal Planner</ModeBtn>
                 <ModeBtn active={mode==="aiPlanner"} onClick={()=>setMode("aiPlanner")}>🤖 AI Planner</ModeBtn>
-                <ModeBtn active={mode==="meal"}   onClick={()=>setMode("meal")}>🍽️ Single Meal</ModeBtn>
-                <ModeBtn active={mode==="weekly"} onClick={()=>setMode("weekly")}>📅 Weekly Plan</ModeBtn>
-                <ModeBtn active={mode==="list"}   onClick={()=>setMode("list")}>🛍️ Shopping List</ModeBtn>
-                <ModeBtn active={mode==="both"}   onClick={()=>setMode("both")}>🍽️ + 🛍️ Both</ModeBtn>
               </div>
-              {mode==="aiPlanner" && <div style={{ marginBottom:"1.25rem", padding:"12px 14px", border:`1px solid ${T.blue}33`, borderRadius:6, background:T.blueLight, color:T.blue, fontSize:13 }}>AI Planner builds a 7-day plan with breakfast, lunch, and dinner using your saved recipe cache and pantry first. Nothing is saved until you generate the smart plan.</div>}
-              {mode==="meal" && (
-                <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:"1rem", marginBottom:"1.25rem" }}>
-                  <Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/>
-                  <Select label="Meal type" value={mealType} onChange={e=>setMealType(e.target.value)} options={MEAL_TYPES}/>
-                </div>
-              )}
-              {mode==="weekly" && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:10, marginBottom:"1.25rem" }}>
-                  {DAYS.map(day=>(
-                    <div key={day} style={{ padding:"12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
-                      <div style={{ fontSize:12, fontWeight:900, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:8 }}>{day}</div>
-                      <div style={{ display:"grid", gap:8 }}>
-                        {MEAL_TYPES.map(type => {
-                          const key = `${day} ${type}`;
-                          return <Input key={key} label={type} value={weeklyMeals[key]??""} onChange={e=>setWeeklyMeals(p=>({...p,[key]:e.target.value}))} placeholder={`Enter ${type.toLowerCase()}...`}/>;
-                        })}
+              {mode==="mealPlanner" && (
+                <div style={{ display:"grid", gap:"1rem", marginBottom:"1.25rem" }}>
+                  <div style={{ display:"grid", gap:12 }}>
+                    {mealPlannerDays.map((day, dayIndex) => (
+                      <div key={`meal-planner-day-${dayIndex}`} style={{ padding:"14px", border:`1px solid ${T.border}`, borderRadius:8, background:T.surfaceAlt }}>
+                        <div style={{ fontSize:12, fontWeight:900, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:10 }}>Day {dayIndex + 1}</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
+                          {MEAL_TYPES.map(mealType => {
+                            const key = mealType.toLowerCase();
+                            const inputId = `${dayIndex}-${key}`;
+                            const suggestions = mealSuggestionsFor(day[key] || "", mealType);
+                            return (
+                              <div key={mealType} style={{ position:"relative" }}>
+                                <Label>{mealType}</Label>
+                                <input
+                                  value={day[key] || ""}
+                                  onChange={e=>updateMealPlannerSlot(dayIndex, mealType, e.target.value)}
+                                  onFocus={()=>setActiveMealSuggestion(inputId)}
+                                  onBlur={()=>setTimeout(()=>setActiveMealSuggestion(null),150)}
+                                  placeholder={`Type or choose ${key}...`}
+                                  style={{ width:"100%", padding:"12px 14px", border:`1px solid ${T.borderDark}`, borderRadius:4, background:T.surface, color:T.ink, fontSize:14, fontFamily:"'Lato',sans-serif", outline:"none" }}
+                                />
+                                {activeMealSuggestion===inputId && !!suggestions.length && (
+                                  <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:50, background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, boxShadow:"0 10px 24px rgba(0,0,0,0.12)", overflow:"hidden" }}>
+                                    {suggestions.map((recipe, idx) => (
+                                      <button
+                                        key={`${inputId}-${recipe.meal}-${idx}`}
+                                        type="button"
+                                        onMouseDown={(e)=>{ e.preventDefault(); updateMealPlannerSlot(dayIndex, mealType, recipe.meal); setActiveMealSuggestion(null); }}
+                                        style={{ width:"100%", display:"flex", justifyContent:"space-between", gap:10, padding:"9px 11px", border:"none", borderBottom:idx===suggestions.length-1?"none":`1px solid ${T.border}`, background:T.surface, color:T.ink, cursor:"pointer", fontFamily:"'Lato',sans-serif", textAlign:"left" }}
+                                      >
+                                        <span style={{ fontSize:13, fontWeight:800 }}>{recipe.meal}</span>
+                                        <span style={{ fontSize:10, color:T.inkSec, textTransform:"uppercase", letterSpacing:"0.04em" }}>{recipe.meal_type || "saved"}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addMealPlannerDay}
+                    disabled={mealPlannerDays.length >= 7}
+                    style={{ justifySelf:"start", padding:"9px 14px", border:`1px solid ${T.green}`, background:mealPlannerDays.length>=7?T.surfaceAlt:T.greenLight, color:mealPlannerDays.length>=7?T.inkSec:T.green, borderRadius:4, fontSize:12, fontWeight:900, letterSpacing:"0.04em", textTransform:"uppercase", cursor:mealPlannerDays.length>=7?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif" }}
+                  >
+                    {mealPlannerDays.length >= 7 ? "7 Day Limit Reached" : "+ Add Day"}
+                  </button>
+                  <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(220px,0.45fr)", gap:"1rem", alignItems:"end" }}>
+                    <Textarea label="Shopping list items — optional (comma or line separated)" value={manualText} onChange={e=>setManualText(e.target.value)} placeholder="tomatoes, olive oil, pasta..." rows={3}/>
+                    <div>
+                      <Label>Upload shopping list — optional</Label>
+                      <input type="file" accept=".txt,.csv,text/plain,text/csv" onChange={handleShoppingListUpload} style={{ width:"100%", padding:"10px", border:`1px solid ${T.borderDark}`, borderRadius:4, background:T.surface, color:T.ink, fontSize:12, fontFamily:"'Lato',sans-serif" }}/>
+                      <div style={{ marginTop:6, fontSize:11, color:T.inkSec }}>Text or CSV uploads append items to the shopping list above.</div>
                     </div>
-                  ))}
+                  </div>
                 </div>
               )}
-              {mode==="both" && (
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1rem", marginBottom:"1.25rem" }}>
-                  <Input label="Enter meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Lentil Curry"/>
-                  <Textarea label="Extra items (comma separated)" value={manualText} onChange={e=>setManualText(e.target.value)} placeholder="bread, yogurt, juice..." rows={2}/>
-                </div>
-              )}
-              {mode==="list" && <div style={{ marginBottom:"1.25rem" }}><Textarea label="Shopping items (comma separated)" value={manualText} onChange={e=>setManualText(e.target.value)} placeholder="tomatoes, olive oil, pasta..." rows={3}/></div>}
               <div style={{ height:1, background:T.border, margin:"1.25rem 0" }}/>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1rem", marginBottom:"1.25rem" }}>
                 <Textarea label="Pantry items — already at home (comma separated)" value={pantryText} onChange={e=>setPantryText(e.target.value)} placeholder="salt, oil, garlic..." rows={2}/>
