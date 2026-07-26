@@ -116,6 +116,41 @@ def _make_store_id(store_name: str, city: str, state: str) -> str:
     return raw.strip("_")
 
 
+
+
+def _coerce_positive_float(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _extract_measurement(*values: object) -> str:
+    text = " ".join(str(value or "") for value in values)
+    match = re.search(r"\b(\d+(?:\.\d+)?)\s*(g|gram|grams|kg|kilogram|kilograms|lb|lbs|pound|pounds|oz|ounce|ounces)\b", text, re.IGNORECASE)
+    if not match:
+        return ""
+    unit = match.group(2).lower()
+    unit = {"gram": "g", "grams": "g", "kilogram": "kg", "kilograms": "kg", "lbs": "lb", "pound": "lb", "pounds": "lb", "ounce": "oz", "ounces": "oz"}.get(unit, unit)
+    return f"{match.group(1)} {unit}"
+
+
+def _receipt_quantity(data: dict) -> float:
+    for key in ("quantity", "qty", "count", "item_count", "no_of_items", "number_of_items"):
+        qty = _coerce_positive_float(data.get(key))
+        if qty is not None:
+            return qty
+    return 1.0
+
+
+def _receipt_line_price(data: dict):
+    for key in ("line_total", "line_price", "total_price", "total", "amount", "price"):
+        price = _coerce_positive_float(data.get(key))
+        if price is not None:
+            return price
+    return None
+
 def _clean_items(items: dict, currency: str, uploaded_by: str, receipt_date: str, now: str) -> dict:
     cleaned = {}
     for raw_name, raw_data in (items or {}).items():
@@ -123,15 +158,18 @@ def _clean_items(items: dict, currency: str, uploaded_by: str, receipt_date: str
         if not name:
             continue
         data = raw_data if isinstance(raw_data, dict) else {"price": raw_data}
-        try:
-            price = float(data.get("price"))
-        except (TypeError, ValueError):
+        quantity = _receipt_quantity(data)
+        line_price = _receipt_line_price(data)
+        if line_price is None:
             continue
-        if price < 0:
-            continue
+        list_price = round(line_price / quantity, 2)
+        measurement = _extract_measurement(name, data.get("measurement"), data.get("unit"))
         cleaned[name] = {
-            "price": price,
+            "price": list_price,
+            "line_price": round(line_price, 2),
+            "quantity": quantity,
             "unit": data.get("unit", ""),
+            "measurement": measurement,
             "currency": data.get("currency", currency),
             "last_updated": now,
             "uploaded_by": uploaded_by,
@@ -167,6 +205,8 @@ def _item_result_from_prices(item_doc: dict, store_id: str, store_name: str = ""
     return {
         "price": float(price),
         "currency": selected.get("currency") or item_doc.get("currency", "USD"),
+        "measurement": selected.get("measurement", ""),
+        "quantity": selected.get("quantity", 1),
     }
 
 
@@ -286,6 +326,8 @@ def get_lowest_receipt_price_for_item(item: str, city: str, state: str = "", cou
                 "store_name": store_data.get("store_name") or store_id,
                 "source": "receipt",
                 "item_name": known_normalized,
+                "measurement": item_data.get("measurement", ""),
+                "quantity": item_data.get("quantity", 1),
             }
             if best is None or candidate["price"] < best["price"]:
                 best = candidate
