@@ -181,7 +181,6 @@ def run_grocery_pipeline(
     # =====================================================
     # STEP 4 — PANTRY FILTER
     # =====================================================
-    #db_pantry_result = MCP_REGISTRY.execute("mongo", "get_pantry", {"user_id": user_id}) or {}
     db_pantry = get_pantry(user_id) or []
     #db_pantry = db_pantry_result.get("items", []) if isinstance(db_pantry_result, dict) else []
 

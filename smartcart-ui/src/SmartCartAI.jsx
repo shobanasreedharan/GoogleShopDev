@@ -1108,9 +1108,6 @@ export default function SmartCartAI() {
   const [regenLoading, setRegenLoading] = useState(false);
   const [regenMsg,     setRegenMsg]     = useState(null);
   const [chatOpen,     setChatOpen]     = useState(false);
-  const [cartOpt,      setCartOpt]      = useState(null);
-  const [cartOptLoading, setCartOptLoading] = useState(false);
-  const [cartOptError, setCartOptError] = useState(null);
   const [userLatLng,   setUserLatLng]   = useState(null);
   const [weekPlan,        setWeekPlan]        = useState(null);
   const [weekPlanLoading, setWeekPlanLoading] = useState(false);
@@ -1205,7 +1202,12 @@ export default function SmartCartAI() {
   const activeSubCount = Object.values(selectedSubs).filter(v=>v&&v!=="Keep original").length;
 
   const handleGenerate = async () => {
-    setError(null); setData(null); setCartOpt(null); setCartOptError(null); setLoading(true);
+    if (mode === "aiPlanner") {
+      setError(null);
+      await handlePlanMyWeek();
+      return;
+    }
+    setError(null); setData(null); setLoading(true);
     const manualItems = manualText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
@@ -1240,32 +1242,6 @@ export default function SmartCartAI() {
     } catch(e) {
       setError(e.message||"Something went wrong.");
     } finally { setLoading(false); }
-  };
-
-  const handleOptimizeCart = async () => {
-    if (!data?.shopping_list?.length) return;
-    setCartOptLoading(true); setCartOptError(null);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/optimize-cart-agent`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{}) },
-        body: JSON.stringify({
-          shopping_list: data.shopping_list || [],
-          substitutions: data.substitutions || {},
-          budget: lastPayloadRef.current?.budget ?? 100,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json?.success === false) {
-        throw new Error(json?.detail || json?.error || "Cart optimization failed");
-      }
-      setCartOpt(json);
-    } catch (e) {
-      setCartOptError(e.message || "Cart optimization failed");
-    } finally {
-      setCartOptLoading(false);
-    }
   };
 
   const handlePlanMyWeek = async () => {
@@ -1439,6 +1415,7 @@ export default function SmartCartAI() {
             <Card className="fu" style={{ marginBottom:"2rem" }}>
               <SectionHead label="Plan Your Groceries" sub="AI builds your optimized shopping plan" />
               <div style={{ display:"flex", gap:8, marginBottom:"1.5rem", flexWrap:"wrap" }}>
+                <ModeBtn active={mode==="aiPlanner"} onClick={()=>setMode("aiPlanner")}>🤖 AI Planner</ModeBtn>
                 <ModeBtn active={mode==="meal"}   onClick={()=>setMode("meal")}>🍽️ Single Meal</ModeBtn>
                 <ModeBtn active={mode==="weekly"} onClick={()=>setMode("weekly")}>📅 Weekly Plan</ModeBtn>
                 <ModeBtn active={mode==="list"}   onClick={()=>setMode("list")}>🛍️ Shopping List</ModeBtn>
@@ -1462,21 +1439,24 @@ export default function SmartCartAI() {
                 <Textarea label="Pantry items — already at home (comma separated)" value={pantryText} onChange={e=>setPantryText(e.target.value)} placeholder="salt, oil, garlic..." rows={2}/>
                 <Select label="Dietary Preference" value={dietary} onChange={e=>setDietary(e.target.value)} options={DIETS}/>
               </div>
-              <button onClick={handleGenerate} disabled={loading} style={{ width:"100%", padding:"14px", background:loading?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:14, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", cursor:loading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", transition:"background 0.15s", opacity:loading?0.7:1 }}>
-                {loading?"Generating Plan…":"✦ Generate Smart Plan"}
+              <button onClick={handleGenerate} disabled={mode==="aiPlanner" ? weekPlanLoading : loading} style={{ width:"100%", padding:"14px", background:(mode==="aiPlanner" ? weekPlanLoading : loading)?T.borderDark:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:14, fontWeight:700, letterSpacing:"0.04em", textTransform:"uppercase", cursor:(mode==="aiPlanner" ? weekPlanLoading : loading)?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", transition:"background 0.15s", opacity:(mode==="aiPlanner" ? weekPlanLoading : loading)?0.7:1 }}>
+                {(mode==="aiPlanner" ? weekPlanLoading : loading)?"Generating Plan…":"✦ Generate Smart Plan"}
               </button>
               {error && <div style={{ marginTop:"1rem", padding:"12px 16px", borderRadius:6, background:T.redLight, border:"1px solid #f5c6c3", color:T.red, fontSize:13 }}>⚠ {error}</div>}
             </Card>
 
+            {(mode!=="aiPlanner" || weekPlan || weekPlanError || weekPlanLoading) && (
             <Card className="fu" style={{ marginBottom:"2rem", borderColor:weekPlanError?T.red+"55":T.blue+"33" }}>
               <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
                 <div>
-                  <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Plan My Week</div>
+                  <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>{mode==="aiPlanner" ? "Weekly Smart Plan" : "Plan My Week"}</div>
                   <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>One agent action chains pantry, meals, shopping list, budget, and receipt-aware store prices.</div>
                 </div>
+                {mode!=="aiPlanner" && (
                 <button onClick={handlePlanMyWeek} disabled={weekPlanLoading} style={{ padding:"11px 20px", background:weekPlanLoading?T.borderDark:T.blue, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:weekPlanLoading?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:weekPlanLoading?0.75:1 }}>
                   {weekPlanLoading ? "Planning…" : "✨ Plan My Week"}
                 </button>
+                )}
               </div>
               {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
               {weekPlan && (
@@ -1540,6 +1520,7 @@ export default function SmartCartAI() {
                 </div>
               )}
             </Card>
+            )}
 
             {loading && (
               <Card style={{ textAlign:"center", padding:"3rem" }}>
@@ -1554,57 +1535,6 @@ export default function SmartCartAI() {
                   {TABS.map(t=><TabBtn key={t.id} active={activeTab===t.id} onClick={()=>setActiveTab(t.id)}>{t.label}</TabBtn>)}
                 </div>
 
-
-                <Card className="fu1" style={{ marginBottom:"1.25rem", borderColor:cartOptError?T.red+"55":T.green+"33" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", gap:16, alignItems:"center", flexWrap:"wrap" }}>
-                    <div>
-                      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22, color:T.ink }}>Optimize My Cart</div>
-                      <div style={{ fontSize:13, color:T.inkSec, marginTop:3 }}>Run pantry, budget, substitution, and store tools to explain possible savings.</div>
-                    </div>
-                    <button onClick={handleOptimizeCart} disabled={cartOptLoading || !list.length} style={{ padding:"11px 20px", background:cartOptLoading||!list.length?T.borderDark:T.green, color:"#FFF", border:"none", borderRadius:4, fontSize:12, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:cartOptLoading||!list.length?"not-allowed":"pointer", fontFamily:"'Lato',sans-serif", opacity:cartOptLoading?0.75:1 }}>
-                      {cartOptLoading ? "Optimizing…" : "✨ Optimize My Cart"}
-                    </button>
-                  </div>
-
-                  {cartOptError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {cartOptError}</div>}
-
-                  {cartOpt && (
-                    <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-                        {[
-                          { label:"Original", value:formatPrice(Number(cartOpt.original_total||0)), color:T.red },
-                          { label:"Optimized", value:formatPrice(Number(cartOpt.optimized_total||0)), color:T.green },
-                          { label:"Savings", value:formatPrice(Number(cartOpt.estimated_savings||0)), color:T.blue },
-                        ].map(m => (
-                          <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
-                            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
-                            <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ padding:"12px 14px", background:T.surfaceAlt, borderRadius:6, border:`1px solid ${T.border}`, fontSize:13, color:T.inkSec, lineHeight:1.65, whiteSpace:"pre-wrap" }}>{cartOpt.summary}</div>
-                      <AgentTrace steps={cartOpt.steps||[]} />
-                      {!!cartOpt.pantry_removed?.length && (
-                        <div style={{ fontSize:12, color:T.green }}>Pantry items skipped: {cartOpt.pantry_removed.join(", ")}</div>
-                      )}
-                      {!!cartOpt.substitutions_applied?.length && (
-                        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                          {cartOpt.substitutions_applied.map((s,i)=><span key={i} style={{ fontSize:11, padding:"4px 8px", background:T.greenLight, color:T.green, borderRadius:14, textTransform:"capitalize" }}>{s.original} → {s.replacement}</span>)}
-                        </div>
-                      )}
-                      {!!cartOpt.store_plan?.length && (
-                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
-                          {cartOpt.store_plan.slice(0,8).map((entry,i)=>(
-                            <div key={`${entry.item}-${i}`} style={{ padding:"9px 10px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
-                              <div style={{ fontSize:12, fontWeight:800, color:T.ink, textTransform:"capitalize" }}>{entry.item}</div>
-                              <div style={{ fontSize:11, color:T.inkSec, marginTop:2 }}>{entry.store} · {formatPrice(Number(entry.price||0), entry.currency||"USD")}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </Card>
 
                 {activeTab==="list" && (
                   <Card className="fu1">
