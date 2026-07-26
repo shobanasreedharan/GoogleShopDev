@@ -142,6 +142,9 @@ def _format_stores(store_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "store_name": r.get("store", {}).get("name"),
+            "brand": r.get("store", {}).get("brand"),
+            "address": r.get("store", {}).get("address"),
+            "rating": r.get("store", {}).get("rating"),
             "lat": r.get("store", {}).get("lat"),
             "lng": r.get("store", {}).get("lng"),
             "basket_price": r.get("score", {}).get("total_price", 0),
@@ -278,10 +281,15 @@ def build_week_plan(
         store_results = clean_stores(recommend_best_store(user_location, optimized_list))
         stores = _format_stores(store_results)
         route = optimize_route([r.get("store", {}) for r in store_results[:3]], user_location)
+        if not route:
+            route = [r.get("store", {}) for r in store_results[:3] if isinstance(r.get("store"), dict)]
         optimized_route = [
             {
                 "stop": index,
                 "store_name": store.get("name"),
+                "brand": store.get("brand"),
+                "address": store.get("address", ""),
+                "rating": store.get("rating"),
                 "lat": store.get("lat"),
                 "lng": store.get("lng"),
                 "distance_km": round(store.get("distance_km", 0), 1),

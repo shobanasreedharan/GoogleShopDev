@@ -23,7 +23,9 @@ def clean_stores(results):
         if not store:
             continue
 
-        if not store.get("lat") or not store.get("lng"):
+        has_coordinates = store.get("lat") is not None and store.get("lng") is not None
+        has_prices = bool(r.get("items") or r.get("price_breakdown"))
+        if not has_coordinates and not has_prices:
             continue
 
         valid.append(r)

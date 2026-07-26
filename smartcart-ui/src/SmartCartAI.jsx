@@ -1365,7 +1365,12 @@ export default function SmartCartAI() {
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ budget: 100 }),
+        body: JSON.stringify({
+          budget: 100,
+          dietary_instruction: dietary,
+          ...(userLatLng ? { user_lat: userLatLng.lat, user_lng: userLatLng.lng } : {}),
+          ...(manualLocationSet ? { manual_city: manualCity, manual_state: manualState, manual_postal_code: manualPostalCode } : {}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Weekly Smart Plan failed");
@@ -1402,10 +1407,13 @@ export default function SmartCartAI() {
   const pm = stores.length ? buildMatrix(stores) : null;
   const pmExpensiveStore = pm ? Object.entries(pm.totals).sort((a,b)=>b[1]-a[1])[0]?.[0] : null;
   const pmCheapestStore  = pm ? Object.entries(pm.totals).sort((a,b)=>a[1]-b[1])[0]?.[0] : null;
-  const pmOriginalCost   = pm&&pmExpensiveStore ? pm.totals[pmExpensiveStore].toFixed(2) : (budgetOpt.original_cost??0);
-  const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
-  const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
-  const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
+  const budgetStoreTotals = budgetOpt.store_totals || {};
+  const budgetExpensiveStore = budgetOpt.expensive_store || (Object.entries(budgetStoreTotals).sort((a,b)=>Number(b[1])-Number(a[1]))[0]?.[0]) || pmExpensiveStore;
+  const budgetCheapestStore = budgetOpt.cheapest_store || (Object.entries(budgetStoreTotals).sort((a,b)=>Number(a[1])-Number(b[1]))[0]?.[0]) || pmCheapestStore;
+  const pmOriginalCost   = Number(budgetOpt.original_cost ?? (pm&&pmExpensiveStore ? pm.totals[pmExpensiveStore] : 0)).toFixed(2);
+  const pmOptimizedCost  = Number(budgetOpt.optimized_cost ?? (pm ? pm.overallCheapest : 0)).toFixed(2);
+  const pmMoneySaved     = Number(budgetOpt.money_saved ?? Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost))).toFixed(2);
+  const pmCurrency       = budgetOpt.currency || (pm ? (Object.values(pm.currencies)[0]||"USD") : "USD");
   const weekPlanMealsByDay = DAYS.map((day, dayIndex) => ({
     day,
     meals: ["Breakfast", "Lunch", "Dinner"].map((mealType, mealTypeIndex) => {
@@ -1741,7 +1749,9 @@ export default function SmartCartAI() {
                               </div>
                               <div style={{ paddingBottom:12, paddingTop:5 }}>
                                 <div style={{ fontSize:15, fontWeight:600, fontFamily:"'Playfair Display',serif", color:stop.isStart?T.green:T.ink }}>{stop.store_name}</div>
-                                {!stop.isStart&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.distance_km} km away</div>}
+                                {!stop.isStart&&Number.isFinite(Number(stop.distance_km))&&Number(stop.distance_km)<999&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.distance_km} km away</div>}
+                                {!stop.isStart&&stop.address&&<div style={{ fontSize:12, color:T.inkSec, marginTop:2 }}>{stop.address}</div>}
+                                {!stop.isStart&&stop.rating&&<div style={{ fontSize:11, color:T.amber, marginTop:2 }}>★ {stop.rating}</div>}
                               </div>
                             </div>
                           ))}
@@ -1847,13 +1857,13 @@ export default function SmartCartAI() {
                     <SectionHead label="Budget Optimization" delay="1"/>
                     {(pmExpensiveStore||pmCheapestStore)&&(
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:"1.25rem", padding:"10px 14px", background:T.surfaceAlt, borderRadius:6, border:`1px solid ${T.border}`, fontSize:12 }}>
-                        <div><span style={{ color:T.inkSec }}>Most expensive: </span><span style={{ fontWeight:700, color:T.red }}>{pmExpensiveStore||"—"}</span></div>
-                        <div><span style={{ color:T.inkSec }}>Cheapest: </span><span style={{ fontWeight:700, color:T.green }}>{pmCheapestStore||"—"}</span></div>
+                        <div><span style={{ color:T.inkSec }}>Most expensive: </span><span style={{ fontWeight:700, color:T.red }}>{budgetExpensiveStore||"—"}</span></div>
+                        <div><span style={{ color:T.inkSec }}>Cheapest: </span><span style={{ fontWeight:700, color:T.green }}>{budgetCheapestStore||"—"}</span></div>
                       </div>
                     )}
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:"1.25rem" }}>
                       {[
-                        {label:"Without Optimization",sublabel:pmExpensiveStore?`Single store: ${pmExpensiveStore}`:"Most expensive store",value:formatPrice(parseFloat(pmOriginalCost),pmCurrency),color:T.red},
+                        {label:"Without Optimization",sublabel:budgetExpensiveStore?`Single store: ${budgetExpensiveStore}`:"Most expensive store",value:formatPrice(parseFloat(pmOriginalCost),pmCurrency),color:T.red},
                         {label:"With Optimization",sublabel:"Multi-store cheapest basket",value:formatPrice(parseFloat(pmOptimizedCost),pmCurrency),color:T.green},
                         {label:"You Save",sublabel:"vs worst single store",value:formatPrice(parseFloat(pmMoneySaved),pmCurrency),color:T.blue},
                       ].map((m,i)=>(
