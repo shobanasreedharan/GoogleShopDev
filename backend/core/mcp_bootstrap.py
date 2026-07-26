@@ -37,7 +37,7 @@ def get_recipe_cache(user_id: str, meal: str) -> dict:
     return get_cached_recipe(user_id, meal)
 
 @mcp.tool()
-def save_recipe_cache_tool(user_id: str, meal: str, ingredients: list, source: str = "vertex_ai") -> dict:
-    return save_recipe_cache(user_id, meal, ingredients, source)
+def save_recipe_cache_tool(user_id: str, meal: str, ingredients: list, source: str = "vertex_ai", meal_type: str | None = None) -> dict:
+    return save_recipe_cache(user_id, meal, ingredients, source, meal_type=meal_type)
 
 app = mcp.streamable_http_app()
