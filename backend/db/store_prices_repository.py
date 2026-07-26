@@ -144,12 +144,20 @@ def _receipt_quantity(data: dict) -> float:
     return 1.0
 
 
-def _receipt_line_price(data: dict):
-    for key in ("line_total", "line_price", "total_price", "total", "amount", "price"):
+def _receipt_unit_price(data: dict):
+    for key in ("unit_list_price", "unit_price", "list_price", "price_each", "price_per_unit"):
         price = _coerce_positive_float(data.get(key))
         if price is not None:
             return price
     return None
+
+
+def _receipt_line_price(data: dict):
+    for key in ("line_total", "line_price", "total_price", "total", "amount"):
+        price = _coerce_positive_float(data.get(key))
+        if price is not None:
+            return price
+    return _coerce_positive_float(data.get("price"))
 
 def _clean_items(items: dict, currency: str, uploaded_by: str, receipt_date: str, now: str) -> dict:
     cleaned = {}
@@ -159,15 +167,14 @@ def _clean_items(items: dict, currency: str, uploaded_by: str, receipt_date: str
             continue
         data = raw_data if isinstance(raw_data, dict) else {"price": raw_data}
         quantity = _receipt_quantity(data)
+        unit_price = _receipt_unit_price(data)
         line_price = _receipt_line_price(data)
-        if line_price is None:
+        if unit_price is None and line_price is None:
             continue
-        list_price = round(line_price / quantity, 2)
-        measurement = _extract_measurement(name, data.get("measurement"), data.get("unit"))
+        list_price = unit_price if unit_price is not None else line_price / quantity
+        measurement = _extract_measurement(name, data.get("measurement"), data.get("weight"), data.get("unit"))
         cleaned[name] = {
-            "price": list_price,
-            "line_price": round(line_price, 2),
-            "quantity": quantity,
+            "price": round(list_price, 2),
             "unit": data.get("unit", ""),
             "measurement": measurement,
             "currency": data.get("currency", currency),

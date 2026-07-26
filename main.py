@@ -653,17 +653,18 @@ Return ONLY valid JSON in this exact format:
   "store_name": "<store name from receipt or empty string>",
   "receipt_date": "<date from receipt in YYYY-MM-DD format or empty string>",
   "items": {
-    "<item name lowercase>": {"quantity": <number from qty/no. of items column or 1>, "line_total": <total line price>, "unit": "<unit or empty>", "measurement": "<weight like 500 g or 2 lb if present in description, else empty>"}
+    "<item name lowercase>": {"quantity": <number from qty/no. of items column or 1>, "weight": "<weight from weight column or description, such as 500 g or 2 lb, else empty>", "unit_list_price": <price for one quantity or one listed weight>, "line_total": <total line price if unit_list_price is not visible, else null>, "unit": "<unit or empty>"}
   }
 }
 
 RULES:
 - item names must be lowercase
+- Receipt columns differ by store. Inspect headings and row layout to identify item name, quantity/no. of items, weight, unit/list price, and total line price.
+- Save unit_list_price only when the receipt shows a per-item/per-weight list price. If only a row total is visible, put that full row total in line_total and keep unit_list_price null.
 - For Desi Bazar-style receipts, the first column is quantity/no. of items and the third column is the total line price. Put the first-column value in quantity and the third-column value in line_total.
-- line_total must be the full row total as a number (no $ sign); do not pre-divide it.
-- If an item description contains a weight such as g, kg, lb, or oz, copy that value into measurement.
+- If an item description or weight column contains g, kg, lb, or oz, copy that value into weight.
 - unit examples: "lb", "oz", "each", "bag", "can", "bottle", ""
-- if you cannot read a line_total clearly, skip that item
+- if you cannot read either unit_list_price or line_total clearly, skip that item
 - No markdown, no explanation, valid JSON only"""
 
         import vertexai
