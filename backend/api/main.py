@@ -535,7 +535,7 @@ If no backend tools matched this message, answer normally without claiming you c
 # /debug/pantry/{user_id} removed — it let anyone query any user's pantry by
 # guessing a uid, with no auth check. Replaced with an auth-protected version
 # that only returns the caller's own pantry.
-def _normalize_pantry_items(raw_items) -> list[str]:
+def _normalize_pantry_items(raw_items) -> list[dict]:
     if raw_items is None:
         return []
     if not isinstance(raw_items, list):
@@ -545,15 +545,30 @@ def _normalize_pantry_items(raw_items) -> list[str]:
     seen = set()
     for item in raw_items:
         if isinstance(item, str):
-            value = item.strip().lower()
+            name, qty, weight = item.strip().lower(), "", ""
         elif isinstance(item, dict):
-            value = str(item.get("name") or item.get("item") or "").strip().lower()
+            name = str(item.get("name") or item.get("item") or "").strip().lower()
+            qty = item.get("qty", item.get("quantity", ""))
+            weight = str(item.get("weight") or item.get("measurement") or "").strip()
         else:
             continue
-        if value and value not in seen:
-            normalized.append(value)
-            seen.add(value)
+        if name and name not in seen:
+            normalized.append({"name": name, "qty": "" if qty is None else qty, "weight": weight})
+            seen.add(name)
     return normalized
+
+
+def _receipt_pantry_items(items: dict) -> list[dict]:
+    pantry_items = []
+    for item_name, data in (items or {}).items():
+        name = str(item_name).strip().lower()
+        if not name:
+            continue
+        row = data if isinstance(data, dict) else {}
+        qty = row.get("qty", row.get("quantity", ""))
+        weight = str(row.get("weight") or row.get("measurement") or "").strip()
+        pantry_items.append({"name": name, "qty": "" if qty is None else qty, "weight": weight})
+    return pantry_items
 
 
 @app.get("/debug/pantry/me")
@@ -653,16 +668,18 @@ Return ONLY valid JSON in this exact format:
   "store_name": "<store name from receipt or empty string>",
   "receipt_date": "<date from receipt in YYYY-MM-DD format or empty string>",
   "items": {
-    "<item name lowercase>": {"price": <float>, "unit": "<unit or empty>"},
-    "<item name lowercase>": {"price": <float>, "unit": "<unit or empty>"}
+    "<item name lowercase>": {"quantity": <number from qty/no. of items column or 1>, "weight": "<weight from weight column or description, such as 500 g or 2 lb, else empty>", "unit_list_price": <price for one quantity or one listed weight>, "line_total": <total line price if unit_list_price is not visible, else null>, "unit": "<unit or empty>"}
   }
 }
 
 RULES:
 - item names must be lowercase
-- price must be a number (no $ sign)
+- Receipt columns differ by store. Inspect headings and row layout to identify item name, quantity/no. of items, weight, unit/list price, and total line price.
+- Save unit_list_price only when the receipt shows a per-item/per-weight list price. If only a row total is visible, put that full row total in line_total and keep unit_list_price null.
+- For Desi Bazar-style receipts, the first column is quantity/no. of items and the third column is the total line price. Put the first-column value in quantity and the third-column value in line_total.
+- If an item description or weight column contains g, kg, lb, or oz, copy that value into weight.
 - unit examples: "lb", "oz", "each", "bag", "can", "bottle", ""
-- if you cannot read a price clearly, skip that item
+- if you cannot read either unit_list_price or line_total clearly, skip that item
 - No markdown, no explanation, valid JSON only"""
 
         import vertexai
@@ -720,7 +737,7 @@ RULES:
         )
         print(f"[receipt/upload] Firestore write result: {result}")
 
-        receipt_pantry_items = [str(item).strip().lower() for item in items.keys() if str(item).strip()]
+        receipt_pantry_items = _receipt_pantry_items(items)
         pantry_items = add_pantry_items(uid, receipt_pantry_items)
         print(f"[receipt/upload] added {len(receipt_pantry_items)} receipt item(s) to pantry; pantry now has {len(pantry_items)} item(s)")
 

@@ -5,14 +5,55 @@ def _user_doc(user_id: str):
     return db.collection("users").document(user_id)
 
 
+def _item_name(item) -> str:
+    if isinstance(item, str):
+        return item.strip().lower()
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("item") or "").strip().lower()
+    return ""
+
+
+def _item_qty(item):
+    if not isinstance(item, dict):
+        return ""
+    value = item.get("qty", item.get("quantity", ""))
+    return "" if value is None else value
+
+
+def _item_weight(item) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("weight") or item.get("measurement") or "").strip()
+
+
+def _normalize_pantry_entry(item):
+    name = _item_name(item)
+    if not name:
+        return None
+    return {"name": name, "qty": _item_qty(item), "weight": _item_weight(item)}
+
+
+def _normalize_pantry_list(items: list) -> list:
+    normalized = []
+    seen = set()
+    for item in items or []:
+        entry = _normalize_pantry_entry(item)
+        if not entry or entry["name"] in seen:
+            continue
+        normalized.append(entry)
+        seen.add(entry["name"])
+    return normalized
+
+
 # -----------------------------------
 # CREATE / REPLACE PANTRY
 # -----------------------------------
 
 def save_pantry(user_id: str, items: list) -> dict:
-    _user_doc(user_id).set({"pantry_items": items}, merge=True)
-    print(f"Updated pantry for {user_id}: {len(items)} items")
-    return {"user_id": user_id, "items": items}
+    normalized = _normalize_pantry_list(items)
+    _user_doc(user_id).set({"pantry_items": normalized}, merge=True)
+    print(f"Updated pantry for {user_id}: {len(normalized)} items")
+    return {"user_id": user_id, "items": normalized}
 
 
 # -----------------------------------
@@ -37,18 +78,19 @@ def get_pantry(user_id: str) -> list:
 
 def add_items(user_id: str, new_items: list) -> list:
     """
-    Add new pantry items
+    Add new pantry items, preserving optional qty/weight metadata.
     """
-    current = get_pantry(user_id)
+    merged_by_name = {entry["name"]: entry for entry in _normalize_pantry_list(get_pantry(user_id))}
 
-    merged = list(
-        set(
-            [x.lower() for x in current]
-            +
-            [x.lower() for x in new_items]
-        )
-    )
+    for entry in _normalize_pantry_list(new_items):
+        existing = merged_by_name.get(entry["name"], {"name": entry["name"], "qty": "", "weight": ""})
+        merged_by_name[entry["name"]] = {
+            "name": entry["name"],
+            "qty": entry.get("qty") if entry.get("qty") not in (None, "") else existing.get("qty", ""),
+            "weight": entry.get("weight") or existing.get("weight", ""),
+        }
 
+    merged = list(merged_by_name.values())
     save_pantry(user_id, merged)
 
     return merged
@@ -64,10 +106,11 @@ def remove_items(user_id: str, items_to_remove: list) -> dict:
     """
     current = get_pantry(user_id)
 
+    remove_names = {_item_name(item) for item in items_to_remove}
     updated = [
         item
-        for item in current
-        if item.lower() not in [x.lower() for x in items_to_remove]
+        for item in _normalize_pantry_list(current)
+        if item["name"] not in remove_names
     ]
 
     save_pantry(user_id, updated)
