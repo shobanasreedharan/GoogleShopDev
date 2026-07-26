@@ -1251,13 +1251,7 @@ export default function SmartCartAI() {
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({
-          budget: 100,
-          dietary_instruction: dietary,
-          meal_count: 21,
-          ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
-          ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
-        }),
+        body: JSON.stringify({ budget: 100 }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Weekly Smart Plan failed");
@@ -1289,11 +1283,8 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
-          suggested_meals: planToApprove.suggested_meals,
-          combined_shopping_list: planToApprove.combined_shopping_list,
-          meal_ingredients: planToApprove.meal_ingredients,
-          nutrition_report: planToApprove.nutrition_report,
-          dietary_instruction: dietary,
+          suggested_meals: weekPlan.suggested_meals,
+          combined_shopping_list: weekPlan.combined_shopping_list,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -1346,13 +1337,18 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
   const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
   const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
   const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
-  const weekPlanMealsByDay = DAYS.map(day => ({
+  const weekPlanMealsByDay = DAYS.map((day, dayIndex) => ({
     day,
-    meals: ["Breakfast", "Lunch", "Dinner"].map(mealType => {
-      const meal = (weekPlan?.suggested_meals || []).find((item, index) => {
-        const fallbackDay = DAYS[Math.floor(index / 3)];
-        const fallbackType = ["Breakfast", "Lunch", "Dinner"][index % 3];
-        return (item?.day || fallbackDay) === day && (item?.meal_type || item?.mealType || fallbackType) === mealType;
+    meals: ["Breakfast", "Lunch", "Dinner"].map((mealType, mealTypeIndex) => {
+      const normalizedMealType = mealType.toLowerCase();
+      const sequentialIndex = dayIndex * 3 + mealTypeIndex;
+      const meal = (weekPlan?.suggested_meals || []).find((candidate, index) => {
+        const candidateDay = String(candidate?.day || "").toLowerCase();
+        const candidateMealType = String(candidate?.meal_type || candidate?.mealType || "").toLowerCase();
+        return (
+          (candidateDay === day.toLowerCase() && candidateMealType === normalizedMealType) ||
+          (!candidateDay && !candidateMealType && index === sequentialIndex)
+        );
       });
       return { mealType, meal };
     }),
@@ -1518,8 +1514,8 @@ const handleApproveWeekPlan = async (planOverride = weekPlan) => {
                           ))}
                         </div>
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                   <AgentTrace steps={weekPlan.steps||[]} />
                   {!!weekPlan.combined_shopping_list?.length && (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
