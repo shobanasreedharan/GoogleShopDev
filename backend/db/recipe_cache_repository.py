@@ -20,6 +20,11 @@ def _normalize_cache_component(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
 
 
+def _normalize_meal_type(value: str | None) -> str:
+    normalized = _normalize_cache_component(value or "")
+    return normalized if normalized in {"breakfast", "lunch", "dinner"} else ""
+
+
 def build_recipe_cache_key(meal: str, dietary: str) -> str:
     return f"{_normalize_cache_component(meal)}|{_normalize_cache_component(dietary)}"
 
@@ -82,8 +87,10 @@ def save_recipe_cache(
     nutrition: dict = None,
     substitutions: dict = None,
     instructions: list = None,
+    meal_type: str | None = None,
 ):
     meal = _normalize_cache_component(meal)
+    meal_type = _normalize_meal_type(meal_type)
     if nutrition is None:
         nutrition = {}
     if substitutions is None:
@@ -105,6 +112,7 @@ def save_recipe_cache(
 
         document.set({
             "meal":             meal,
+            "meal_type":        meal_type,
             "ingredients":      clean_ingredients,
             "instructions":     clean_instructions,
             "source":           source,
@@ -140,6 +148,7 @@ def user_save_recipe(
     try:
         _cache_collection(user_id).document(doc_id).set({
             "meal":        meal,
+            "meal_type":   "",
             "ingredients": clean_ingredients,
             "instructions": clean_instructions,
             "source":      "user_saved",
@@ -160,6 +169,7 @@ def normalize_cache(doc: dict):
     if not doc:
         return None
     return {
+        "meal_type":        doc.get("meal_type", ""),
         "ingredients":      doc.get("ingredients", []),
         "instructions":            doc.get("instructions", []),
         "nutrition_report": doc.get("nutrition_report", {}),

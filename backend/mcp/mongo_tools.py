@@ -87,6 +87,7 @@ class MongoTools:
             meal=payload["meal"],
             ingredients=payload["ingredients"],
             source=payload.get("source", "vertex_ai"),
+            meal_type=payload.get("meal_type"),
         )
 
     def _update_pantry(self, payload: Dict[str, Any]) -> dict:

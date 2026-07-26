@@ -139,6 +139,7 @@ function TabBtn({ active, onClick, children }) {
 
 const DAYS  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const DIETS = ["None","Vegetarian","Vegan","Keto","High Protein","Low Carb"];
+const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner"];
 const TABS  = [
   { id:"list",      label:"Shopping List" },
   { id:"stores",    label:"Store Prices"  },
@@ -1093,9 +1094,9 @@ export default function SmartCartAI() {
   const handleSignOut = () => signOut(auth).catch(console.error);
 
   // ── Home page state ───────────────────────────────────────────────────────
-  const [mode,         setMode]         = useState("meal");
-  const [planType,     setPlanType]     = useState("single");
+  const [mode,         setMode]         = useState("aiPlanner");
   const [dish,         setDish]         = useState("");
+  const [mealType,     setMealType]     = useState("Dinner");
   const [weeklyMeals,  setWeeklyMeals]  = useState({});
   const [manualText,   setManualText]   = useState("");
   const [pantryText,   setPantryText]   = useState("");
@@ -1112,7 +1113,6 @@ export default function SmartCartAI() {
   const [weekPlan,        setWeekPlan]        = useState(null);
   const [weekPlanLoading, setWeekPlanLoading] = useState(false);
   const [weekPlanError,   setWeekPlanError]   = useState(null);
-  const [weekPlanSaveMsg, setWeekPlanSaveMsg] = useState(null);
   const resultsRef     = useRef(null);
   const lastPayloadRef = useRef(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -1212,7 +1212,7 @@ export default function SmartCartAI() {
     const pantryItems = pantryText.split(",").map(x=>x.trim().toLowerCase()).filter(Boolean);
     let weekly = {};
     if (mode !== "list") {
-      if (planType==="single"&&dish.trim()) weekly = { meal_1:dish.trim() };
+      if (mode === "meal" && dish.trim()) weekly = { [mealType]:dish.trim() };
       else weekly = Object.fromEntries(Object.entries(weeklyMeals).filter(([,v])=>v.trim()));
     }
     if (!Object.keys(weekly).length&&!manualItems.length) {
@@ -1245,41 +1245,78 @@ export default function SmartCartAI() {
   };
 
   const handlePlanMyWeek = async () => {
-    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null); setWeekPlanSaveMsg(null);
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlan(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ budget: 100 }),
+        body: JSON.stringify({
+          budget: 100,
+          dietary_instruction: dietary,
+          meal_count: 21,
+          ...(userLatLng?{user_lat:userLatLng.lat,user_lng:userLatLng.lng}:{}),
+          ...(manualLocationSet?{manual_city:manualCity,manual_state:manualState,manual_postal_code:manualPostalCode}:{}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.detail || json.error || "Weekly Smart Plan failed");
       setWeekPlan(json);
+      setData(weekPlanToResults(json));
+      setActiveTab("list");
+      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
+      return json;
     } catch (e) {
-      setWeekPlanError(e.message);
+      const message = e.message || "Plan My Week failed";
+      setWeekPlanError(message);
+      throw new Error(message);
     } finally {
       setWeekPlanLoading(false);
     }
   };
 
-  const handleApproveWeekPlan = async () => {
-    if (!weekPlan) return;
-    //console.log("suggested_meals shape:", JSON.stringify(weekPlan.suggested_meals, null, 2));
-    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+const handleApproveWeekPlan = async (planOverride = weekPlan) => {
+    const planToApprove = planOverride || weekPlan;
+    if (!planToApprove) {
+      const message = "Generate a weekly plan before saving.";
+      setWeekPlanError(message);
+      throw new Error(message);
+    }
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
-          suggested_meals: weekPlan.suggested_meals,
-          combined_shopping_list: weekPlan.combined_shopping_list,
+          suggested_meals: planToApprove.suggested_meals,
+          combined_shopping_list: planToApprove.combined_shopping_list,
+          meal_ingredients: planToApprove.meal_ingredients,
+          nutrition_report: planToApprove.nutrition_report,
+          dietary_instruction: dietary,
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
-      setWeekPlanSaveMsg({ type: "success", text: "Plan saved to your profile." });
+      setWeekPlanSaveMsg({ type: "success", text: "Smart plan generated and saved to your recipe cache." });
+      setData(weekPlanToResults(planToApprove));
+      setActiveTab("list");
+      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
+      return json;
+    } catch (e) {
+      const message = e.message || "Generate Smart Plan failed";
+      setWeekPlanError(message);
+      throw new Error(message);
+    } finally {
+      setWeekPlanLoading(false);
+    }
+  };
+
+  const handleGenerateAiPlanner = async () => {
+    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const plan = weekPlan || await handlePlanMyWeek();
+      if (plan) await handleApproveWeekPlan(plan);
     } catch (e) {
       setWeekPlanError(e.message);
     }
@@ -1309,22 +1346,17 @@ export default function SmartCartAI() {
   const pmOptimizedCost  = pm ? pm.overallCheapest.toFixed(2) : (budgetOpt.optimized_cost??0);
   const pmMoneySaved     = Math.max(0,parseFloat(pmOriginalCost)-parseFloat(pmOptimizedCost)).toFixed(2);
   const pmCurrency       = pm ? (Object.values(pm.currencies)[0]||"USD") : (budgetOpt.currency||"USD");
-  const weekPlanStoreComparisons = (weekPlan?.recommended_stores || [])
-    .map((store, index) => {
-      const basketPrice = Number(store?.basket_price ?? store?.total_price ?? 0);
-      const firstItem = Array.isArray(store?.items) ? store.items[0] : null;
-      const firstBreakdown = Array.isArray(store?.price_breakdown) ? store.price_breakdown[0] : null;
-      return {
-        ...store,
-        _index: index,
-        _storeName: store?.store_name || store?.name || store?.store || "Store",
-        _basketPrice: Number.isFinite(basketPrice) ? basketPrice : 0,
-        _distanceKm: Number(store?.distance_km ?? store?.distance ?? 0),
-        _currency: firstItem?.currency || firstBreakdown?.currency || store?.currency || "USD",
-      };
-    })
-    .sort((a,b) => a._basketPrice - b._basketPrice);
-  const weekPlanCheapestPrice = weekPlanStoreComparisons.length ? weekPlanStoreComparisons[0]._basketPrice : null;
+  const weekPlanMealsByDay = DAYS.map(day => ({
+    day,
+    meals: ["Breakfast", "Lunch", "Dinner"].map(mealType => {
+      const meal = (weekPlan?.suggested_meals || []).find((item, index) => {
+        const fallbackDay = DAYS[Math.floor(index / 3)];
+        const fallbackType = ["Breakfast", "Lunch", "Dinner"][index % 3];
+        return (item?.day || fallbackDay) === day && (item?.meal_type || item?.mealType || fallbackType) === mealType;
+      });
+      return { mealType, meal };
+    }),
+  }));
 
   if (authLoading) return (
     <><style>{css}</style>
@@ -1421,10 +1453,26 @@ export default function SmartCartAI() {
                 <ModeBtn active={mode==="list"}   onClick={()=>setMode("list")}>🛍️ Shopping List</ModeBtn>
                 <ModeBtn active={mode==="both"}   onClick={()=>setMode("both")}>🍽️ + 🛍️ Both</ModeBtn>
               </div>
-              {mode==="meal" && <div style={{ marginBottom:"1.25rem" }}><Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/></div>}
+              {mode==="aiPlanner" && <div style={{ marginBottom:"1.25rem", padding:"12px 14px", border:`1px solid ${T.blue}33`, borderRadius:6, background:T.blueLight, color:T.blue, fontSize:13 }}>AI Planner builds a 7-day plan with breakfast, lunch, and dinner using your saved recipe cache and pantry first. Nothing is saved until you generate the smart plan.</div>}
+              {mode==="meal" && (
+                <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:"1rem", marginBottom:"1.25rem" }}>
+                  <Input label="Enter one meal" value={dish} onChange={e=>setDish(e.target.value)} placeholder="e.g. Tomato Veg Pasta"/>
+                  <Select label="Meal type" value={mealType} onChange={e=>setMealType(e.target.value)} options={MEAL_TYPES}/>
+                </div>
+              )}
               {mode==="weekly" && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:10, marginBottom:"1.25rem" }}>
-                  {DAYS.map(day=><Input key={day} label={day} value={weeklyMeals[day]??""} onChange={e=>setWeeklyMeals(p=>({...p,[day]:e.target.value}))} placeholder="Enter meal..."/>)}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:10, marginBottom:"1.25rem" }}>
+                  {DAYS.map(day=>(
+                    <div key={day} style={{ padding:"12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                      <div style={{ fontSize:12, fontWeight:900, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:8 }}>{day}</div>
+                      <div style={{ display:"grid", gap:8 }}>
+                        {MEAL_TYPES.map(type => {
+                          const key = `${day} ${type}`;
+                          return <Input key={key} label={type} value={weeklyMeals[key]??""} onChange={e=>setWeeklyMeals(p=>({...p,[key]:e.target.value}))} placeholder={`Enter ${type.toLowerCase()}...`}/>;
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
               {mode==="both" && (
@@ -1456,47 +1504,19 @@ export default function SmartCartAI() {
               {weekPlanError && <div style={{ marginTop:"1rem", padding:"10px 14px", borderRadius:6, background:T.redLight, color:T.red, border:`1px solid ${T.red}33`, fontSize:13 }}>⚠ {weekPlanError}</div>}
               {weekPlan && (
                 <div style={{ marginTop:"1.25rem", display:"grid", gap:12 }}>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
-                    {(weekPlan.suggested_meals||[]).map((meal,i)=>(
-                      <div key={`${meal.name}-${i}`} style={{ padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
-                        <div style={{ fontSize:13, fontWeight:800, color:T.ink }}>{meal.name}</div>
-                        <div style={{ fontSize:11, color:T.inkSec, marginTop:3 }}>{meal.reason}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-                    {[
-                      { label:"Original", value:formatPrice(Number(weekPlan.original_total||0)), color:T.red },
-                      { label:"Optimized", value:formatPrice(Number(weekPlan.optimized_total||0)), color:T.green },
-                      { label:"Savings", value:formatPrice(Number(weekPlan.estimated_savings||0)), color:T.blue },
-                    ].map(m => (
-                      <div key={m.label} style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6, textAlign:"center" }}>
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:m.color }}>{m.value}</div>
-                        <div style={{ fontSize:10, fontWeight:800, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase", marginTop:3 }}>{m.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {!!weekPlanStoreComparisons.length && (
-                    <div style={{ padding:"12px", background:T.surfaceAlt, border:`1px solid ${T.border}`, borderRadius:6 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap" }}>
-                        <div style={{ fontSize:12, fontWeight:800, color:T.ink, letterSpacing:"0.05em", textTransform:"uppercase" }}>Compare Nearby Stores</div>
-                        <div style={{ fontSize:11, color:T.inkSec }}>Sorted by basket price</div>
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:8 }}>
-                        {weekPlanStoreComparisons.map(store => {
-                          const isCheapest = Math.abs(store._basketPrice - weekPlanCheapestPrice) < 0.001;
-                          const distance = Number.isFinite(store._distanceKm) && store._distanceKm > 0 ? `${store._distanceKm.toFixed(1)} km away` : "Nearby";
-                          return (
-                            <div key={`${store._storeName}-${store._index}`} style={{ padding:"10px 12px", border:`1px solid ${isCheapest?T.green+"66":T.border}`, borderRadius:6, background:isCheapest?T.greenLight:T.surface, display:"grid", gap:5 }}>
-                              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                                <div style={{ fontSize:13, fontWeight:800, color:isCheapest?T.green:T.ink, lineHeight:1.25 }}>{store._storeName}</div>
-                                {isCheapest && <span style={{ fontSize:10, fontWeight:800, color:T.green, whiteSpace:"nowrap" }}>✓ CHEAPEST</span>}
-                              </div>
-                              <div style={{ fontSize:11, color:T.inkSec }}>{distance}</div>
-                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, fontWeight:700, color:isCheapest?T.green:T.ink }}>{formatPrice(store._basketPrice, store._currency)}</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:10 }}>
+                    {weekPlanMealsByDay.map(({ day, meals }) => (
+                      <div key={day} style={{ padding:"12px", border:`1px solid ${T.border}`, borderRadius:6, background:T.surfaceAlt }}>
+                        <div style={{ fontSize:12, fontWeight:900, color:T.blue, letterSpacing:"0.05em", textTransform:"uppercase", marginBottom:8 }}>{day}</div>
+                        <div style={{ display:"grid", gap:8 }}>
+                          {meals.map(({ mealType, meal }) => (
+                            <div key={`${day}-${mealType}`} style={{ padding:"8px 10px", border:`1px solid ${T.border}`, borderRadius:5, background:T.surface }}>
+                              <div style={{ fontSize:10, fontWeight:900, color:T.inkSec, letterSpacing:"0.05em", textTransform:"uppercase" }}>{mealType}</div>
+                              <div style={{ fontSize:13, fontWeight:800, color:T.ink, marginTop:2 }}>{meal?.name || "Meal pending"}</div>
+                              {meal?.reason && <div style={{ fontSize:11, color:T.inkSec, marginTop:3 }}>{meal.reason}</div>}
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1511,7 +1531,6 @@ export default function SmartCartAI() {
                     <span style={{ fontSize:12, color:T.inkSec }}>Requires approval before saving.</span>
                     <button onClick={handleApproveWeekPlan} style={{ padding:"9px 16px", background:T.ink, color:"#FFF", border:"none", borderRadius:4, fontSize:11, fontWeight:800, letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", fontFamily:"'Lato',sans-serif" }}>Approve & Save</button>
                   </div>
-                  {weekPlanSaveMsg && <div style={{ padding:"10px 14px", borderRadius:6, fontSize:13, background:weekPlanSaveMsg.type==="success"?T.greenLight:T.redLight, color:weekPlanSaveMsg.type==="success"?T.green:T.red, border:`1px solid ${weekPlanSaveMsg.type==="success"?T.green+"33":T.red+"33"}` }}>{weekPlanSaveMsg.text}</div>}
                 </div>
               )}
             </Card>
@@ -1817,7 +1836,7 @@ export default function SmartCartAI() {
                 placeholder="e.g. Austin or Hyderabad"
                 style={{ width: "100%", background: T.surfaceAlt, border: `1px solid ${T.border}`, borderRadius: 4, padding: "10px 12px", fontSize: 14, marginBottom: 12, boxSizing: "border-box", fontFamily: "'Lato',sans-serif" }}
               />
-    
+
               <Label>ZIP / Postal / PIN Code (recommended for accuracy)</Label>
               <input
                 type="text"
@@ -1829,7 +1848,7 @@ export default function SmartCartAI() {
               <p style={{ margin: "-8px 0 12px", fontSize: 12, color: T.subtext }}>
                 Adding this helps us find stores much closer to you than city alone.
               </p>
-    
+
               <Label>State / Province / Region</Label>
               <input
                 type="text"
