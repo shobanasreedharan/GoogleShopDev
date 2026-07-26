@@ -197,47 +197,6 @@ function formatPrice(amount, currency="USD") {
   return `${CURRENCY_SYMBOLS[currency] || ""}${amount.toFixed(2)}`;
 }
 
-
-function normalizeNutritionReport(report={}) {
-  const raw = report || {};
-  const scores = raw.nutrition_scores || raw.scores || raw;
-  const feedback = raw.ai_feedback || raw.feedback || {};
-  return {
-    ...raw,
-    nutrition_scores: {
-      calories: scores.calories ?? 0,
-      protein_g: scores.protein_g ?? scores.protein ?? 0,
-      carbs_g: scores.carbs_g ?? scores.carbs ?? 0,
-      fat_g: scores.fat_g ?? scores.fat ?? 0,
-      fiber_g: scores.fiber_g ?? scores.fiber ?? 0,
-      protein_score: scores.protein_score ?? 0,
-      vegetable_score: scores.vegetable_score ?? 0,
-      carb_score: scores.carb_score ?? 0,
-      fat_score: scores.fat_score ?? 0,
-      health_rating: scores.health_rating || raw.health_rating || "—",
-    },
-    ai_feedback: {
-      summary: feedback.summary || raw.summary || "",
-      strengths: feedback.strengths || raw.strengths || [],
-      weaknesses: feedback.weaknesses || raw.weaknesses || [],
-      recommendations: feedback.recommendations || raw.recommendations || [],
-    },
-  };
-}
-
-function normalizeSubstitutions(substitutions={}) {
-  return Object.fromEntries(
-    Object.entries(substitutions || {})
-      .map(([item, options]) => {
-        if (Array.isArray(options)) return [item, options.filter(Boolean).map(String)];
-        if (typeof options === "string") return [item, [options].filter(Boolean)];
-        if (options && typeof options === "object") return [item, Object.values(options).filter(Boolean).map(String)];
-        return [item, []];
-      })
-      .filter(([, options]) => options.length)
-  );
-}
-
 function apiErrorMessage(json={}, fallback="Request failed") {
   const detail = json?.detail;
   if (Array.isArray(detail)) {
@@ -1356,6 +1315,53 @@ export default function SmartCartAI() {
     }
   };
 
+const handleApproveWeekPlan = async (planOverride = weekPlan) => {
+    const planToApprove = planOverride || weekPlan;
+    if (!planToApprove) {
+      const message = "Generate a weekly plan before saving.";
+      setWeekPlanError(message);
+      throw new Error(message);
+    }
+    setWeekPlanLoading(true); setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/plan-my-week/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          suggested_meals: planToApprove.suggested_meals,
+          combined_shopping_list: planToApprove.combined_shopping_list,
+          meal_ingredients: planToApprove.meal_ingredients,
+          nutrition_report: planToApprove.nutrition_report,
+          dietary_instruction: dietary,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(apiErrorMessage(json, "Approve failed"));
+      setWeekPlanSaveMsg({ type: "success", text: "Smart plan generated and saved to your recipe cache." });
+      setData(weekPlanToResults(planToApprove));
+      setActiveTab("list");
+      setTimeout(()=>resultsRef.current?.scrollIntoView({behavior:"smooth"}),100);
+      return json;
+    } catch (e) {
+      const message = e.message || "Generate Smart Plan failed";
+      setWeekPlanError(message);
+      throw new Error(message);
+    } finally {
+      setWeekPlanLoading(false);
+    }
+  };
+
+  const handleGenerateAiPlanner = async () => {
+    setWeekPlanError(null); setWeekPlanSaveMsg(null);
+    try {
+      const plan = weekPlan || await handlePlanMyWeek();
+      if (plan) await handleApproveWeekPlan(plan);
+    } catch (e) {
+      setWeekPlanError(e.message || "Generate Smart Plan failed");
+    }
+  };
+
   const submitManualLocation = () => {
     const hasCityState = manualCity.trim() && manualState.trim();
     const hasPostalCode = manualPostalCode.trim();
@@ -1367,9 +1373,9 @@ export default function SmartCartAI() {
   const stores   = data?.recommended_stores ?? [];
   const route    = data?.optimized_route    ?? [];
   const list     = data?.shopping_list      ?? [];
-  const subs     = normalizeSubstitutions(data?.substitutions);
+  const subs     = data?.substitutions      ?? {};
   const loc      = data?.user_location      ?? {};
-  const nutr     = normalizeNutritionReport(data?.nutrition_report);
+  const nutr     = data?.nutrition_report   ?? {};
   const scores   = nutr.nutrition_scores    ?? {};
   const feedback = nutr.ai_feedback         ?? {};
   const budgetOpt = data?.budget_summary?.optimization ?? {};
@@ -1812,7 +1818,7 @@ export default function SmartCartAI() {
                             <div key={item} style={{ padding:"1rem 1.25rem", borderRadius:6, background:T.surfaceAlt, border:`1px solid ${T.border}` }}>
                               <div style={{ fontFamily:"'Playfair Display',serif", fontWeight:600, textTransform:"capitalize", marginBottom:10 }}>{item}</div>
                               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                                {["Keep original",...options].map(opt=>(
+                                {["Keep original",...(Array.isArray(options)?options:[])].map(opt=>(
                                   <button key={opt} onClick={()=>setSelectedSubs(p=>({...p,[item]:opt}))}
                                     style={{ fontSize:12, padding:"5px 12px", borderRadius:20, border:`1px solid ${selectedSubs[item]===opt||(!selectedSubs[item]&&opt==="Keep original")?T.green:T.border}`, background:selectedSubs[item]===opt||(!selectedSubs[item]&&opt==="Keep original")?T.greenLight:"transparent", color:selectedSubs[item]===opt||(!selectedSubs[item]&&opt==="Keep original")?T.green:T.inkSec, cursor:"pointer", fontFamily:"'Lato',sans-serif", fontWeight:700, textTransform:"capitalize", transition:"all 0.15s" }}>
                                     {opt==="Keep original"?"✓ Keep original":`↳ ${opt}`}
