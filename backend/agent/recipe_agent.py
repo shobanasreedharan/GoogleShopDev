@@ -6,7 +6,11 @@ from dotenv import load_dotenv
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
-from backend.core.registry import MCP_REGISTRY
+from backend.db.recipe_cache_repository import (
+    build_recipe_cache_key,
+    get_cached_recipe,
+    save_recipe_cache,
+)
 
 load_dotenv()
 
@@ -37,16 +41,13 @@ def generate_meal_plan(dish_name: str, dietary_instruction: str) -> Dict[str, An
     - nutrition report
     """
 
-    mongo = MCP_REGISTRY.tools.get("mongo")
+    user_id = os.getenv("DEFAULT_USER_ID", "demo_user")
+    cache_key = build_recipe_cache_key(dish_name, dietary_instruction)
 
     # -------------------------
     # 1. CACHE CHECK
     # -------------------------
-    cached = MCP_REGISTRY.execute(
-        "mongo",
-        "get_recipe_cache",
-        {"meal": dish_name}
-    )
+    cached = get_cached_recipe(user_id, cache_key)
 
     if cached:
         return cached
@@ -141,16 +142,13 @@ def generate_meal_plan(dish_name: str, dietary_instruction: str) -> Dict[str, An
         # -------------------------
         # 3. CACHE RESULT
         # -------------------------
-        MCP_REGISTRY.execute(
-            "mongo",
-            "save_recipe_cache",
-            {
-                "meal": dish_name,
-                "ingredients": cleaned_list,
-                "nutrition_report": nutrition_report,
-                "substitutions": substitutions,
-                "source": "vertex_ai"
-            }
+        save_recipe_cache(
+            user_id=user_id,
+            meal=cache_key,
+            ingredients=cleaned_list,
+            nutrition=nutrition_report,
+            substitutions=substitutions,
+            source="vertex_ai",
         )
 
         return result

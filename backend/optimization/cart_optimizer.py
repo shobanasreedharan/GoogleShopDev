@@ -1,4 +1,3 @@
-from backend.services.price_engine import get_item_price
 from backend.services.location import get_user_location
 from backend.services.store_finder import haversine_distance
 from backend.services.store_finder import mock_check_inventory
