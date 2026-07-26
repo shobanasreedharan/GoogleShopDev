@@ -82,7 +82,21 @@ class StorePricesRepositoryTests(unittest.TestCase):
         self.assertEqual(result["sample_path"], "city_prices/us_mo_st_louis/items/organic_milk")
 
         price = self.repository.get_real_price("organic milk", "Fresh Market", "st louis", "mo")
-        self.assertEqual(price, {"price": 4.49, "currency": "USD"})
+        self.assertEqual(price, {"price": 4.49, "currency": "USD", "measurement": "", "quantity": 1.0})
+
+
+    def test_receipt_line_total_is_saved_as_unit_price_with_measurement(self):
+        self.repository.save_store_prices(
+            uploaded_by="user-1",
+            store_name="Desi Bazar",
+            city="Austin",
+            state="Texas",
+            country="US",
+            items={"atta 10 lb": {"quantity": 2, "line_total": 13.98, "unit": "bag"}},
+        )
+
+        price = self.repository.get_real_price("atta 10 lb", "Desi Bazar", "Austin", "Texas")
+        self.assertEqual(price, {"price": 6.99, "currency": "USD", "measurement": "10 lb", "quantity": 2.0})
 
     def test_stores_in_city_uses_city_prices_subcollection(self):
         self.repository.save_store_prices(

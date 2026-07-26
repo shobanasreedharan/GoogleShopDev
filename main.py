@@ -653,16 +653,17 @@ Return ONLY valid JSON in this exact format:
   "store_name": "<store name from receipt or empty string>",
   "receipt_date": "<date from receipt in YYYY-MM-DD format or empty string>",
   "items": {
-    "<item name lowercase>": {"price": <float>, "unit": "<unit or empty>"},
-    "<item name lowercase>": {"price": <float>, "unit": "<unit or empty>"}
+    "<item name lowercase>": {"quantity": <number from qty/no. of items column or 1>, "line_total": <total line price>, "unit": "<unit or empty>", "measurement": "<weight like 500 g or 2 lb if present in description, else empty>"}
   }
 }
 
 RULES:
 - item names must be lowercase
-- price must be a number (no $ sign)
+- For Desi Bazar-style receipts, the first column is quantity/no. of items and the third column is the total line price. Put the first-column value in quantity and the third-column value in line_total.
+- line_total must be the full row total as a number (no $ sign); do not pre-divide it.
+- If an item description contains a weight such as g, kg, lb, or oz, copy that value into measurement.
 - unit examples: "lb", "oz", "each", "bag", "can", "bottle", ""
-- if you cannot read a price clearly, skip that item
+- if you cannot read a line_total clearly, skip that item
 - No markdown, no explanation, valid JSON only"""
 
         import vertexai
