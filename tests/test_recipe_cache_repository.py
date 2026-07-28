@@ -133,6 +133,25 @@ class RecipeCacheRepositoryTests(unittest.TestCase):
         self.assertEqual(result["shopping_list"], ["pasta", "lemon"])
         self.assertEqual(result["_source"], "cache")
 
+    def test_single_meal_slot_key_saves_field_name_as_meal_type(self):
+        dotenv = types.ModuleType("dotenv")
+        dotenv.load_dotenv = lambda: None
+        saved_calls = []
+        recipe_module = types.ModuleType("backend.db.recipe_cache_repository")
+        recipe_module.build_recipe_cache_key = lambda meal, dietary: f"{meal.lower()}|{dietary.lower()}"
+        recipe_module.get_cached_recipe = lambda user_id, key: None
+        recipe_module.save_recipe_cache = lambda **kwargs: saved_calls.append(kwargs) or {"success": True}
+
+        sys.modules.pop("backend.agent.unified_ai_agent", None)
+        sys.modules["dotenv"] = dotenv
+        sys.modules["backend.db.recipe_cache_repository"] = recipe_module
+        agent = importlib.import_module("backend.agent.unified_ai_agent")
+
+        with patch.object(agent, "generate_primary_or_fallback", return_value=('{"shopping_list":["rice","moong dal"],"nutrition_report":{},"substitutions":{},"instructions":[]}', "test-model")):
+            agent.run_unified_ai("user-1", {"day_1_breakfast": "Pongal"}, dietary="None")
+
+        self.assertEqual(saved_calls[0]["meal_type"], "breakfast")
+
 
 if __name__ == "__main__":
     unittest.main()
