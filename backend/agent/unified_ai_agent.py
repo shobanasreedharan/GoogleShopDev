@@ -9,6 +9,7 @@ from backend.db.recipe_cache_repository import (
     get_cached_recipe,
     save_recipe_cache
 )
+from backend.utils.sanitizers import clean_shopping_list
 
 load_dotenv()
 
@@ -84,6 +85,12 @@ INSTRUCTIONS RULES:
 - Action verbs only (Sauté, Boil, Mix, Add, Cook, Serve)
 - No tips, no explanations, just the action
 
+SHOPPING LIST RULES:
+- Return ingredient names only. Do not include prepared side dishes or menu items.
+- Do not include quantities, package sizes, teaspoon/tablespoon/cup amounts, or prep notes.
+- Do not include adjectives like small, big, chopped, diced, or garnish notes.
+- Example: use "coriander leaves", not "coriander leaves (for garnish)".
+
 RULES: Follow dietary rule strictly. No markdown. No explanation. Valid JSON ONLY.
 """
 
@@ -96,6 +103,7 @@ You MUST return ONLY valid JSON.
 
 TASK: For EACH meal listed, generate its own ingredient list and cooking instructions separately.
 Then generate a combined nutrition analysis and substitutions for the whole week.
+Only return ingredient names in each ingredients list; do not include prepared side dishes/menu items, quantities, size adjectives, teaspoon/cup amounts, or garnish/prep notes.
 
 INPUT:
 Meals: {meal_list}
@@ -138,7 +146,7 @@ INSTRUCTIONS RULES:
 - Each step must be under 100 characters
 - Action verbs only. No tips or explanations.
 
-RULES: Each meal key must match the meal name exactly as given. Follow dietary rule strictly. No markdown. No explanation. Valid JSON ONLY.
+RULES: Each meal key must match the meal name exactly as given. Do not add descriptive adjectives or extra phrases to meal names. Follow dietary rule strictly. No markdown. No explanation. Valid JSON ONLY.
 """
 
 
@@ -339,10 +347,10 @@ def run_unified_ai(
                         (v for k, v in meals_data.items() if k.lower() == meal.lower()), {}
                     )
                     if isinstance(meal_data, list):
-                        ingredients  = [str(i).lower().strip() for i in meal_data if str(i).strip()]
+                        ingredients  = clean_shopping_list(meal_data)
                         instructions = []
                     else:
-                        ingredients  = [str(i).lower().strip() for i in meal_data.get("ingredients", []) if str(i).strip()]
+                        ingredients  = clean_shopping_list(meal_data.get("ingredients", []))
                         instructions = meal_data.get("instructions", [])
 
                     if ingredients:

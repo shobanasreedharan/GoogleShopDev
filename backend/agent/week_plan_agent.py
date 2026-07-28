@@ -45,6 +45,20 @@ def _meal_slot(index: int) -> tuple[str, str]:
     return day, meal_type
 
 
+
+DESCRIPTIVE_MEAL_PREFIXES = {
+    "simple", "hearty", "delicious", "flavorful", "classic", "rustic",
+    "easy", "quick", "healthy", "fresh", "homestyle", "comforting",
+}
+
+
+def _clean_meal_name(name: str) -> str:
+    words = str(name or "").strip().split()
+    while words and words[0].strip(" ,.-").lower() in DESCRIPTIVE_MEAL_PREFIXES:
+        words = words[1:]
+    cleaned = " ".join(words).split(" with ")[0].strip(" ,.-")
+    return cleaned or str(name or "").strip()
+
 def _fallback_weekly_meals(pantry_items: list[str], count: int = 21) -> list[dict[str, str]]:
     pantry_hint = ", ".join(pantry_items[:3]) if pantry_items else "basic staples"
     return [
@@ -71,10 +85,10 @@ def _parse_suggested_meals(text: str, pantry_items: list[str], count: int) -> li
         meals = []
         for raw in raw_meals or []:
             if isinstance(raw, str):
-                name, reason = raw.strip(), "Suggested for the week."
+                name, reason = _clean_meal_name(raw), "Suggested for the week."
                 day, meal_type = "", ""
             elif isinstance(raw, dict):
-                name = str(raw.get("name") or raw.get("meal") or "").strip()
+                name = _clean_meal_name(raw.get("name") or raw.get("meal") or "")
                 reason = str(raw.get("reason") or raw.get("why") or "Suggested for the week.").strip()
                 day = str(raw.get("day") or "").strip()
                 meal_type = str(raw.get("meal_type") or raw.get("mealType") or raw.get("type") or "").strip()
@@ -83,13 +97,8 @@ def _parse_suggested_meals(text: str, pantry_items: list[str], count: int) -> li
             if name:
                 slot_day, slot_type = _meal_slot(len(meals))
                 meals.append({"name": name, "day": day or slot_day, "meal_type": meal_type or slot_type, "reason": reason})
-            elif isinstance(raw, dict):
-                name = str(raw.get("name") or raw.get("meal") or "").strip()
-                reason = str(raw.get("reason") or raw.get("why") or "Suggested for the week.").strip()
             else:
                 continue
-            if name:
-                meals.append({"name": name, "reason": reason})
             if len(meals) >= count:
                 break
         return meals or _fallback_weekly_meals(pantry_items, count)
@@ -103,6 +112,8 @@ def _suggest_weekly_meals(pantry_items: list[str], dietary: str, count: int = 21
 Return ONLY valid JSON.
 Suggest {count} practical meals for a full 7-day week: breakfast, lunch, and dinner for each day.
 Use pantry context when helpful, but meals must still work if pantry is sparse.
+Meal names must be short and concise — just the core dish name, no descriptive adjectives like "Simple", "Hearty", "Delicious", "Flavorful", "Classic", or "Rustic".
+Do not add phrases such as "with Fresh Basil" or "for Busy Weeknights" to meal names; use "Tomato Pasta" instead of "Simple Tomato Pasta with Fresh Basil".
 
 Pantry items: {pantry_items}
 Dietary preference: {dietary}
@@ -142,6 +153,9 @@ def _format_stores(store_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "store_name": r.get("store", {}).get("name"),
+            "brand": r.get("store", {}).get("brand"),
+            "address": r.get("store", {}).get("address"),
+            "rating": r.get("store", {}).get("rating"),
             "lat": r.get("store", {}).get("lat"),
             "lng": r.get("store", {}).get("lng"),
             "basket_price": r.get("score", {}).get("total_price", 0),
@@ -278,10 +292,15 @@ def build_week_plan(
         store_results = clean_stores(recommend_best_store(user_location, optimized_list))
         stores = _format_stores(store_results)
         route = optimize_route([r.get("store", {}) for r in store_results[:3]], user_location)
+        if not route:
+            route = [r.get("store", {}) for r in store_results[:3] if isinstance(r.get("store"), dict)]
         optimized_route = [
             {
                 "stop": index,
                 "store_name": store.get("name"),
+                "brand": store.get("brand"),
+                "address": store.get("address", ""),
+                "rating": store.get("rating"),
                 "lat": store.get("lat"),
                 "lng": store.get("lng"),
                 "distance_km": round(store.get("distance_km", 0), 1),

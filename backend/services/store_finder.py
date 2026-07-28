@@ -381,6 +381,8 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
         source = "estimate"
         price_store = store_name
         receipt_price = None
+        measurement = ""
+        quantity = 1
 
         if city:
             if get_real_price is not None:
@@ -403,6 +405,8 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
                 note = "Receipt-derived city price"
                 source = receipt_price.get("source", "receipt")
                 price_store = receipt_price.get("store_name", store_name)
+                measurement = receipt_price.get("measurement", "")
+                quantity = receipt_price.get("quantity", 1)
 
         if price is None:
             price = _estimate_price(item_name, store_name, currency)
@@ -424,6 +428,8 @@ def mock_check_inventory(store_name, shopping_list, city="", state="", country="
             "note": note,
             "source": source,
             "price_store": price_store,
+            "measurement": measurement,
+            "quantity": quantity,
         }
 
     return inventory

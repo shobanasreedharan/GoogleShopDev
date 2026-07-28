@@ -12,6 +12,10 @@ class WeekPlanAgentTests(unittest.TestCase):
         pantry_repo.get_pantry = lambda user_id: ["tomato", "rice"]
         sys.modules["backend.db.pantry_repository"] = pantry_repo
 
+        recipe_repo = types.ModuleType("backend.db.recipe_cache_repository")
+        recipe_repo.list_recipes = lambda user_id: []
+        sys.modules["backend.db.recipe_cache_repository"] = recipe_repo
+
         unified = types.ModuleType("backend.agent.unified_ai_agent")
         unified.generate_text = lambda prompt: '{"meals":[{"name":"Tomato Pasta","reason":"Uses pantry tomato"},{"name":"Rice Bowl","reason":"Uses pantry rice"}]}'
         unified.run_unified_ai = lambda **kwargs: {
@@ -49,7 +53,7 @@ class WeekPlanAgentTests(unittest.TestCase):
         finder = types.ModuleType("backend.services.store_finder")
         finder.recommend_best_store = lambda user_location, shopping_list: [
             {
-                "store": {"name": "Zepto Market", "lat": 17.38, "lng": 78.48},
+                "store": {"name": "Zepto Market", "brand": "Zepto", "address": "1 Market Rd", "rating": 4.4, "lat": 17.38, "lng": 78.48},
                 "score": {"total_price": 14, "distance_km": 1.2, "final_score": 0.9},
                 "items": [
                     {"item": "pasta", "price": 8, "currency": "INR", "source": "estimate"},
@@ -90,7 +94,17 @@ class WeekPlanAgentTests(unittest.TestCase):
         self.assertEqual(result["combined_shopping_list"], ["pasta", "beans"])
         self.assertEqual(result["price_sources"], {"pasta": "estimate", "beans": "receipt"})
         self.assertEqual(result["estimated_savings"], 6.0)
+        self.assertEqual(result["recommended_stores"][0]["address"], "1 Market Rd")
+        self.assertEqual(result["optimized_route"][0]["address"], "1 Market Rd")
         self.assertGreaterEqual(len(result["steps"]), 4)
+
+    def test_parse_suggested_meals_removes_descriptive_adjectives(self):
+        payload = '{"meals":[{"name":"Simple Tomato Pasta with Fresh Basil","day":"Monday","meal_type":"Dinner"},{"name":"Hearty Vegetable Stir Fry"},{"name":"Classic Masal Dosa"}]}'
+
+        meals = self.agent._parse_suggested_meals(payload, [], 10)
+
+        self.assertEqual([meal["name"] for meal in meals], ["Tomato Pasta", "Vegetable Stir Fry", "Masal Dosa"])
+        self.assertFalse(any(meal["name"].split()[0].lower() in self.agent.DESCRIPTIVE_MEAL_PREFIXES for meal in meals))
 
     def test_negative_budget_is_bad_input(self):
         with self.assertRaises(ValueError):
